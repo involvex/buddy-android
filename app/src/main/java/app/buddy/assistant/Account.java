@@ -18,11 +18,11 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * One agent (Claude Code, Codex, OpenCode, Antigravity or Grok) inside Buddy's built-in Linux: install it, sign in,
+ * One agent (Claude Code, Codex, OpenCode, Kilo, Antigravity or Grok) inside Buddy's built-in Linux: install it, sign in,
  * check the account. Claude Code's and Antigravity's sign-ins show a one-time code in the browser; Buddy reads it off
  * the screen (accessibility), the clipboard, or a paste box. Codex's sign-in returns to a local address inside Linux by
- * itself; Grok's is a device code the user confirms in the browser. OpenCode needs no sign-in (its free models work
- * right away); providers are connected in the terminal.
+ * itself; Grok's is a device code the user confirms in the browser. OpenCode and Kilo need no forced sign-in (free /
+ * gateway models); providers are connected in the terminal.
  */
 final class Account {
     enum Step { CHECKING, NEED_INSTALL, INSTALLING, SIGNED_OUT, WAITING_BROWSER, FINISHING, SIGNED_IN, ERROR }
@@ -34,29 +34,30 @@ final class Account {
     static final Account CLAUDE = new Account("claude");
     static final Account CODEX = new Account("codex");
     static final Account OPENCODE = new Account("opencode");
+    static final Account KILO = new Account("kilo");
     static final Account AGY = new Account("agy");
     static final Account GROK = new Account("grok");
-    static final Account[] ALL = {CLAUDE, CODEX, OPENCODE, AGY, GROK};
+    static final Account[] ALL = {CLAUDE, CODEX, OPENCODE, KILO, AGY, GROK};
 
     static Account of(String agent) {
-        return "codex".equals(agent) ? CODEX : "opencode".equals(agent) ? OPENCODE : "agy".equals(agent) ? AGY
-                : "grok".equals(agent) ? GROK : CLAUDE;
+        return "codex".equals(agent) ? CODEX : "opencode".equals(agent) ? OPENCODE : "kilo".equals(agent) ? KILO
+                : "agy".equals(agent) ? AGY : "grok".equals(agent) ? GROK : CLAUDE;
     }
 
-    /** Is this one of Buddy's agents ("claude", "codex", "opencode", "agy" or "grok")? */
+    /** Is this one of Buddy's agents ("claude", "codex", "opencode", "kilo", "agy" or "grok")? */
     static boolean known(String agent) {
         return of(agent).agent.equals(agent);
     }
 
-    /** The agent's display name: "Claude Code", "Codex", "OpenCode", "Antigravity" or "Grok". */
+    /** The agent's display name: "Claude Code", "Codex", "OpenCode", "Kilo", "Antigravity" or "Grok". */
     static String nameOf(String agent) {
         return of(agent).name();
     }
 
-    /** Its command-line name, shown in mono labels: "claude-code", "codex", "opencode", "agy" or "grok". */
+    /** Its command-line name, shown in mono labels: "claude-code", "codex", "opencode", "kilo", "agy" or "grok". */
     static String cliOf(String agent) {
-        return "codex".equals(agent) ? "codex" : "opencode".equals(agent) ? "opencode" : "agy".equals(agent) ? "agy"
-                : "grok".equals(agent) ? "grok" : "claude-code";
+        return "codex".equals(agent) ? "codex" : "opencode".equals(agent) ? "opencode" : "kilo".equals(agent) ? "kilo"
+                : "agy".equals(agent) ? "agy" : "grok".equals(agent) ? "grok" : "claude-code";
     }
 
     final String agent;
@@ -106,6 +107,10 @@ final class Account {
         return "opencode".equals(agent);
     }
 
+    boolean kilo() {
+        return "kilo".equals(agent);
+    }
+
     boolean agy() {
         return "agy".equals(agent);
     }
@@ -114,16 +119,22 @@ final class Account {
         return "grok".equals(agent);
     }
 
-    /** Usable without paying, within limits (OpenCode's free models, Antigravity's and Grok's free plans). */
+    /** OpenCode or Kilo: providers / gateway are connected in the terminal, not via Buddy's OAuth flow. */
+    boolean terminalAuth() {
+        return opencode() || kilo();
+    }
+
+    /** Usable without paying, within limits (OpenCode/Kilo free models, Antigravity's and Grok's free plans). */
     boolean freeTier() {
-        return opencode() || agy() || grok();
+        return opencode() || kilo() || agy() || grok();
     }
 
     String name() {
-        return claude() ? "Claude Code" : opencode() ? "OpenCode" : agy() ? "Antigravity" : grok() ? "Grok" : "Codex";
+        return claude() ? "Claude Code" : opencode() ? "OpenCode" : kilo() ? "Kilo"
+                : agy() ? "Antigravity" : grok() ? "Grok" : "Codex";
     }
 
-    /** The plan to show: OpenCode's "free models" marker in the user's language, anything else as it is. */
+    /** The plan to show: OpenCode/Kilo's "free models" marker in the user's language, anything else as it is. */
     String planLabel() {
         return "free models".equals(plan) ? BuddyApp.str(R.string.onboarding_agent_free_models) : plan;
     }
@@ -131,6 +142,7 @@ final class Account {
     /** One line on what the agent runs on, for pickers. */
     String tagline() {
         return BuddyApp.str(claude() ? R.string.account_tagline_claude : opencode() ? R.string.account_tagline_opencode
+                : kilo() ? R.string.account_tagline_kilo
                 : agy() ? R.string.account_tagline_agy : grok() ? R.string.account_tagline_grok : R.string.account_tagline_codex);
     }
 
@@ -235,6 +247,33 @@ final class Account {
                         if (a.length() > 0) {
                             Prefs.setOpencodeModels(app, a.toString());
                             Models.set("opencode", a.toString());
+                        }
+                    }
+                } else if (kilo()) {
+                    // installed means ready; gateway / providers via `kilo auth` in the terminal
+                    String out = Linux.exec(app, "command -v kilo >/dev/null || { echo NOTINSTALLED; exit 0; }; "
+                            + "timeout 45 kilo auth list --format json 2>/dev/null | jq -r '[.[].name] | join(\", \")' 2>/dev/null; "
+                            + "echo KILO_OK; echo VER=$(timeout 45 kilo --version 2>/dev/null)", 120);
+                    if (out.contains("NOTINSTALLED")) {
+                        set(Step.NEED_INSTALL, "");
+                    } else {
+                        version = ver(out);
+                        int ok = out.indexOf("KILO_OK");
+                        String providers = ok < 0 ? "" : out.substring(0, ok).trim();
+                        email = "";
+                        plan = providers.isEmpty() ? "free models" : providers;
+                        set(Step.SIGNED_IN, "");
+                        String list = Linux.exec(app, "timeout 60 kilo models 2>/dev/null", 70);
+                        org.json.JSONArray a = new org.json.JSONArray();
+                        for (String line : list.split("\n")) {
+                            String m = line.trim();
+                            if (m.matches("[A-Za-z0-9._-]+/\\S+")) {
+                                a.put(new org.json.JSONArray().put(m).put(m.substring(m.indexOf('/') + 1)));
+                            }
+                        }
+                        if (a.length() > 0) {
+                            Prefs.setKiloModels(app, a.toString());
+                            Models.set("kilo", a.toString());
                         }
                     }
                 } else if (agy()) {
@@ -358,7 +397,8 @@ final class Account {
                     Helper.sync(app); // (also points apk and npm at the chosen download server, see Mirrors)
                     set(Step.INSTALLING, app.getString(R.string.account_installing_tools));
                     String o = Linux.exec(app, "apk update -q && apk add -q bash curl jq libgcc libstdc++ ripgrep git "
-                            + "ca-certificates procps coreutils findutils" + (claude() || agy() || grok() ? "" : " nodejs npm")
+                            + "ca-certificates procps coreutils findutils"
+                            + (claude() || agy() || grok() ? "" : " nodejs npm")
                             + (agy() ? " util-linux-misc" : "") // script: Antigravity's sign-in needs a terminal
                             + " && echo TOOLS_OK", 900);
                     if (!o.contains("TOOLS_OK")) throw new IOException(tail(o));
@@ -388,9 +428,23 @@ final class Account {
                     if (!o.contains("AGENT_OK")) throw new IOException(tail(o));
                 } else if (opencode()) {
                     set(Step.INSTALLING, app.getString(R.string.account_downloading, name()));
-                    // OpenCode 2 (npm @opencode/cli), always a fresh install (OC_REMOVE)
-                    String o = Linux.exec(app, OC_REMOVE + " npm install -g @opencode/cli >/tmp/npm.log 2>&1;"
+                    // OpenCode 2 (npm @opencode/cli): pin the Alpine musl binary before install (same as update)
+                    String o = Linux.exec(app, ": >/tmp/npm.log; v=$(npm view @opencode/cli version 2>>/tmp/npm.log);"
+                            + " [ -n \"$v\" ] || { tail -5 /tmp/npm.log; exit 0; };"
+                            + " npm cache add @opencode/cli@$v @opencode/cli-linux-arm64-musl@$v >>/tmp/npm.log 2>&1"
+                            + " || { tail -5 /tmp/npm.log; exit 0; };" + OC_REMOVE
+                            + " npm install -g @opencode/cli@$v >>/tmp/npm.log 2>&1;"
                             + " tail -5 /tmp/npm.log;" + OC_GLIBC + " opencode --version && echo AGENT_OK", 1800);
+                    if (!o.contains("AGENT_OK")) throw new IOException(tail(o));
+                } else if (kilo()) {
+                    set(Step.INSTALLING, app.getString(R.string.account_downloading, name()));
+                    // Kilo CLI (OpenCode fork): same Alpine musl pin as OpenCode
+                    String o = Linux.exec(app, ": >/tmp/npm.log; v=$(npm view @kilocode/cli version 2>>/tmp/npm.log);"
+                            + " [ -n \"$v\" ] || { tail -5 /tmp/npm.log; exit 0; };"
+                            + " npm cache add @kilocode/cli@$v @kilocode/cli-linux-arm64-musl@$v >>/tmp/npm.log 2>&1"
+                            + " || { tail -5 /tmp/npm.log; exit 0; };" + KILO_REMOVE
+                            + " npm install -g @kilocode/cli@$v >>/tmp/npm.log 2>&1;"
+                            + " tail -5 /tmp/npm.log;" + KILO_GLIBC + " kilo --version && echo AGENT_OK", 1800);
                     if (!o.contains("AGENT_OK")) throw new IOException(tail(o));
                 } else {
                     set(Step.INSTALLING, app.getString(R.string.account_downloading, name()));
@@ -420,6 +474,12 @@ final class Account {
 
     /** npm also fetches OpenCode's glibc build; Buddy's Alpine only runs the musl one, so drop the other (~200 MB). */
     private static final String OC_GLIBC = " rm -rf /usr/local/lib/node_modules/@opencode/cli/node_modules/@opencode/cli-linux-arm64;";
+
+    private static final String KILO_REMOVE = " for i in 1 2; do rm -rf /usr/local/lib/node_modules/@kilocode/cli"
+            + " /usr/local/lib/node_modules/@kilocode/.cli-* /usr/local/bin/kilo 2>/dev/null; done;";
+
+    /** Same as OC_GLIBC for Kilo's optional glibc platform package. */
+    private static final String KILO_GLIBC = " rm -rf /usr/local/lib/node_modules/@kilocode/cli/node_modules/@kilocode/cli-linux-arm64;";
 
     private static final String AGY_BIN = "/root/.local/bin/agy";
     private static volatile boolean agyModelsBusy;
@@ -472,6 +532,14 @@ final class Account {
                             + " || { tail -3 /tmp/npm.log; exit 0; };" + OC_REMOVE
                             + " npm install -g @opencode/cli@$v >>/tmp/npm.log 2>&1; fi;"
                             + OC_GLIBC + " tail -3 /tmp/npm.log; echo VER=$(opencode --version)", 1800);
+                } else if (kilo()) {
+                    o = Linux.exec(app, ": >/tmp/npm.log; v=$(npm view @kilocode/cli version 2>>/tmp/npm.log);"
+                            + " [ -n \"$v\" ] || { tail -3 /tmp/npm.log; exit 0; };"
+                            + " if [ \"$(kilo --version 2>/dev/null | grep -oE '[0-9]+[.][0-9]+[.][0-9]+' | head -1)\" != \"$v\" ]; then"
+                            + " npm cache add @kilocode/cli@$v @kilocode/cli-linux-arm64-musl@$v >>/tmp/npm.log 2>&1"
+                            + " || { tail -3 /tmp/npm.log; exit 0; };" + KILO_REMOVE
+                            + " npm install -g @kilocode/cli@$v >>/tmp/npm.log 2>&1; fi;"
+                            + KILO_GLIBC + " tail -3 /tmp/npm.log; echo VER=$(kilo --version)", 1800);
                 } else {
                     o = Linux.exec(app, "npm install -g @openai/codex@latest >/tmp/npm.log 2>&1; tail -3 /tmp/npm.log;"
                             + " echo VER=$(codex --version)", 1800);
@@ -504,7 +572,7 @@ final class Account {
      *  it opens in the browser and the user confirms the code there; remote shows the link and code as for Codex. */
     void startLogin(Context c, boolean onOtherDevice) {
         app = c.getApplicationContext();
-        if (busy() || opencode()) return; // OpenCode: providers are connected in the terminal (opencode auth login)
+        if (busy() || terminalAuth()) return; // OpenCode/Kilo: providers via terminal auth
         final Context app = c.getApplicationContext();
         url = null;
         state = null;
@@ -655,7 +723,7 @@ final class Account {
             try {
                 if (agy()) Linux.exec(app, "rm -f " + AGY_TOKEN, 60); // agy only signs out from its own screen (/logout)
                 else if (grok()) Linux.exec(app, GROK_BIN + " logout", 60);
-                else if (!opencode()) Linux.exec(app, claude() ? "claude auth logout" : "codex logout", 60);
+                else if (!terminalAuth()) Linux.exec(app, claude() ? "claude auth logout" : "codex logout", 60);
                 // a token signs Claude Code in as well: signing out takes it away too
                 if (claude()) Linux.exec(app, CLAUDE_SETTINGS + "jq 'del(.env.CLAUDE_CODE_OAUTH_TOKEN) | if (.env // {}) == {} "
                         + "then del(.env) else . end' $f > $f.new && mv $f.new $f", 60);
@@ -714,6 +782,11 @@ final class Account {
     /** The common ways an install fails, in plain words (null: none of them; the raw output is shown instead). */
     private static String plainError(Context c, String out) {
         if (out.contains("No space left")) return c.getString(R.string.account_install_no_space);
+        if (out.contains("shared libraries") || out.contains("cannot open shared object")
+                || out.contains("error while loading shared libraries")
+                || out.matches("(?s).*\\.so[: ].*")) {
+            return c.getString(R.string.account_install_native_lib);
+        }
         if (out.matches("(?s).*(Could not resolve host|curl: \\((6|7|28)\\)|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|ECONNRESET"
                 + "|Network is unreachable|temporary error \\(try again later\\)).*")) {
             return c.getString(R.string.account_install_network);

@@ -40,7 +40,8 @@ final class Providers {
         boolean fits(String agent) {
             if ("claude".equals(agent)) return !anthropic.isEmpty();
             if ("codex".equals(agent)) return !openai.isEmpty(); // an OpenAI-style service is taken to have the Responses API; if not, the agent says so
-            return "opencode".equals(agent) && (!anthropic.isEmpty() || !openai.isEmpty());
+            return ("opencode".equals(agent) || "kilo".equals(agent))
+                    && (!anthropic.isEmpty() || !openai.isEmpty());
         }
 
         /** The models the pickers offer: the ones picked to show, or all. */

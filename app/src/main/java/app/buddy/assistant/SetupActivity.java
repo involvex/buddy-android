@@ -314,6 +314,8 @@ public class SetupActivity extends Screen implements Account.Listener, RemoteSes
         boolean signed = SetupState.signedIn(this, backend);
         String signText = acc.opencode()
                 ? getString(signed ? R.string.setup_step_signin_opencode_done : R.string.setup_step_signin_opencode)
+                : acc.kilo()
+                ? getString(signed ? R.string.setup_step_signin_kilo_done : R.string.setup_step_signin_kilo)
                 : signed ? (acc.email.isEmpty() ? getString(R.string.setup_step_signin_done)
                 : getString(R.string.setup_step_signin_done_email, acc.email))
                 : getString(acc.claude() ? R.string.setup_step_signin_claude : acc.grok() ? R.string.setup_step_signin_grok
@@ -345,7 +347,7 @@ public class SetupActivity extends Screen implements Account.Listener, RemoteSes
             signText += "\n\n" + getString(R.string.setup_step_signin_others, acc.name(), android.text.TextUtils.join(", ", names));
         }
         // no key and no other agent ready: OpenCode's free models need no account at all
-        boolean offerFree = !signed && misfit == null && ready.isEmpty() && !acc.opencode();
+        boolean offerFree = !signed && misfit == null && ready.isEmpty() && !acc.terminalAuth();
         if (offerFree) signText += "\n\n" + getString(R.string.setup_step_signin_free);
         // what can answer instead: the agents already ready, and those that can use the saved key
         java.util.List<String> choices = new java.util.ArrayList<>(signed ? new java.util.ArrayList<String>() : ready);
@@ -366,7 +368,8 @@ public class SetupActivity extends Screen implements Account.Listener, RemoteSes
         String installText = installed ? getString(R.string.setup_step_install_done, acc.name())
                 : acc.step == Account.Step.INSTALLING ? acc.detail
                 : Ui.downloadNote(this, getString(acc.claude() ? R.string.setup_step_install_claude : acc.opencode()
-                ? R.string.setup_step_install_opencode : acc.grok() ? R.string.setup_step_install_grok
+                ? R.string.setup_step_install_opencode : acc.kilo() ? R.string.setup_step_install_kilo
+                : acc.grok() ? R.string.setup_step_install_grok
                 : R.string.setup_step_install_codex, acc.name()));
         boolean offerOther = !installed && misfit != null && !keyAgents.isEmpty() && acc.step != Account.Step.INSTALLING;
         if (offerOther) {
@@ -466,7 +469,7 @@ public class SetupActivity extends Screen implements Account.Listener, RemoteSes
         brainInfo.setPaddingRelative(0, dp(this, 2), 0, 0);
         ag.addView(brainInfo);
         ag.addView(segmented(this, new String[][]{{"claude", "Claude Code"}, {"codex", "Codex"}, {"opencode", "OpenCode"},
-                        {"agy", "Antigravity"}, {"grok", "Grok"}},
+                        {"kilo", "Kilo"}, {"agy", "Antigravity"}, {"grok", "Grok"}},
                 backend, false, v -> {
                     Prefs.setBackend(this, v);
                     Toast.makeText(this, getString(R.string.setup_default_brain_set, Account.nameOf(v)),
@@ -509,7 +512,7 @@ public class SetupActivity extends Screen implements Account.Listener, RemoteSes
         mcp.setPaddingRelative(dp(this, 16), dp(this, 14), dp(this, 16), dp(this, 16));
         mcp.addView(text(this, getString(R.string.setup_phone_tools_info), 14, MUTED));
         mcp.addView(segmented(this, new String[][]{{"claude", "claude"}, {"codex", "codex"}, {"opencode", "opencode"},
-                        {"agy", "agy"}, {"grok", "grok"}},
+                        {"kilo", "kilo"}, {"agy", "agy"}, {"grok", "grok"}},
                 mcpAgent, true, v -> {
                     mcpAgent = v;
                     render();
@@ -528,6 +531,11 @@ public class SetupActivity extends Screen implements Account.Listener, RemoteSes
                 ? "echo 'export OPENCODE_CONFIG_CONTENT='\\''{\"mcp\":{\"phone\":{\"type\":\"remote\",\"url\":\"" + url
                 + "\",\"oauth\":false,\"timeout\":600000,\"headers\":{\"Authorization\":\"Bearer " + token
                 + "\"}}}}'\\''' >> ~/.bashrc && . ~/.bashrc"
+                : "kilo".equals(mcpAgent)
+                // Kilo (OpenCode fork): same remote MCP inject via OPENCODE_CONFIG_CONTENT / KILO_CONFIG_CONTENT
+                ? "echo 'export OPENCODE_CONFIG_CONTENT='\\''{\"mcp\":{\"phone\":{\"type\":\"remote\",\"url\":\"" + url
+                + "\",\"oauth\":false,\"timeout\":600000,\"headers\":{\"Authorization\":\"Bearer " + token
+                + "\"}}}}'\\''' >> ~/.bashrc && echo 'export KILO_CONFIG_CONTENT=\"$OPENCODE_CONFIG_CONTENT\"' >> ~/.bashrc && . ~/.bashrc"
                 : "agy".equals(mcpAgent)
                 // Antigravity keeps it in ~/.gemini/config/mcp_config.json
                 ? "agy mcp add --header 'Authorization: Bearer " + token + "' phone " + url
@@ -652,8 +660,8 @@ public class SetupActivity extends Screen implements Account.Listener, RemoteSes
         // the agent of the new chat that live voice starts from the hold menu or the power button
         vc.addView(fieldLabel(getString(R.string.setup_live_agent), null), topGap(16));
         vc.addView(segmented(this, new String[][]{{"", getString(R.string.setup_live_agent_default)},
-                        {"claude", "Claude Code"}, {"codex", "Codex"}, {"opencode", "OpenCode"}, {"agy", "Antigravity"},
-                        {"grok", "Grok"}}, Prefs.liveAgent(this), false, v -> {
+                        {"claude", "Claude Code"}, {"codex", "Codex"}, {"opencode", "OpenCode"}, {"kilo", "Kilo"},
+                        {"agy", "Antigravity"}, {"grok", "Grok"}}, Prefs.liveAgent(this), false, v -> {
                     Prefs.setLiveAgent(this, v);
                     render();
                 }, notReady(), v -> {
@@ -748,6 +756,19 @@ public class SetupActivity extends Screen implements Account.Listener, RemoteSes
                 rcc.addView(pairBtn, pbp);
             }
         }
+        // InVxTermux RUN_COMMAND (Tools.run_termux)
+        rcc.addView(divider(), lineParams());
+        LinearLayout txT = column(this);
+        txT.setPaddingRelative(0, dp(this, 10), 0, dp(this, 10));
+        txT.addView(title(this, getString(R.string.setup_termux_run), 15));
+        txT.addView(text(this, getString(R.string.setup_termux_run_info), 13, MUTED));
+        if (TermuxRunner.installed(this) && !TermuxRunner.hasPermission(this)) {
+            Button grant = button(this, getString(R.string.setup_termux_grant), false);
+            grant.setOnClickListener(v -> TermuxRunner.requestPermission(this));
+            txT.addView(grant, topGap(8));
+        }
+        rcc.addView(txT);
+
         // SSH into Buddy's Linux from Termux (SshServer)
         rcc.addView(divider(), lineParams());
         rcc.addView(switchRow(this, getString(R.string.setup_ssh), getString(R.string.setup_ssh_info),
@@ -1643,7 +1664,7 @@ public class SetupActivity extends Screen implements Account.Listener, RemoteSes
         boolean busy = a.step == Account.Step.INSTALLING;
         String state = busy ? getString(R.string.setup_agent_installing)
                 : !Linux.installed(this) || st == null || "NEED_INSTALL".equals(st) ? getString(R.string.setup_agent_not_installed)
-                : a.opencode() ? (a.plan.isEmpty() ? getString(R.string.setup_agent_ready)
+                : a.terminalAuth() ? (a.plan.isEmpty() ? getString(R.string.setup_agent_ready)
                 : getString(R.string.setup_agent_ready_plan, a.planLabel()))
                 // ready through an API key isn't being signed in: the plan's features still need that
                 : "SIGNED_IN".equals(st) && (a.claude() || "codex".equals(agent)) && a.apiKey && !a.planIn ? getString(R.string.setup_agent_api_key)

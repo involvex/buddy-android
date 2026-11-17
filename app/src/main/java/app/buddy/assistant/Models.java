@@ -36,8 +36,8 @@ final class Models {
     }
 
     private static String key(String backend) {
-        return "codex".equals(backend) || "opencode".equals(backend) || "agy".equals(backend) || "grok".equals(backend)
-                ? backend : "claude";
+        return "codex".equals(backend) || "opencode".equals(backend) || "kilo".equals(backend)
+                || "agy".equals(backend) || "grok".equals(backend) ? backend : "claude";
     }
 
     /** The agent's own models (its plan's, or OpenCode's), "" (its default) first; only that until it has reported. */
@@ -289,6 +289,7 @@ final class Models {
         if ("codex".equals(backend)) return BuddyApp.str(R.string.models_default_codex);
         if ("agy".equals(backend)) return BuddyApp.str(R.string.models_default_agy);
         if ("grok".equals(backend)) return BuddyApp.str(R.string.models_default_grok);
+        if ("kilo".equals(backend)) return BuddyApp.str(R.string.models_default_kilo);
         return BuddyApp.str(R.string.models_default_opencode);
     }
 

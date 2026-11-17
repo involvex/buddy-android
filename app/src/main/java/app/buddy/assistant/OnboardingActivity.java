@@ -188,7 +188,8 @@ public class OnboardingActivity extends Screen implements Account.Listener {
                 if (!ok) {
                     String agents = Prefs.agents(this);
                     note(Prefs.localSetup(this) ? getString(R.string.onboarding_access_privacy_local)
-                            : "opencode".equals(agents) ? getString(R.string.onboarding_access_privacy_opencode, agentNames())
+                            : "opencode".equals(agents) || "kilo".equals(agents)
+                            ? getString(R.string.onboarding_access_privacy_opencode, agentNames())
                             : "both".equals(agents) ? getString(R.string.onboarding_access_privacy_both)
                             : getString(R.string.onboarding_access_privacy, agentNames(),
                             "codex".equals(agents) ? "OpenAI" : "agy".equals(agents) ? "Google" : "grok".equals(agents) ? "xAI"
@@ -279,6 +280,7 @@ public class OnboardingActivity extends Screen implements Account.Listener {
                 {"claude", "Claude Code", getString(R.string.onboarding_brain_claude)},
                 {"codex", "Codex", getString(R.string.onboarding_brain_codex)},
                 {"opencode", "OpenCode", getString(R.string.onboarding_brain_opencode)},
+                {"kilo", "Kilo", getString(R.string.onboarding_brain_kilo)},
                 {"agy", "Antigravity", getString(R.string.onboarding_brain_agy)},
                 {"grok", "Grok", getString(R.string.onboarding_brain_grok)},
                 {"both", "Claude Code + Codex", getString(R.string.onboarding_brain_both)},
@@ -359,7 +361,7 @@ public class OnboardingActivity extends Screen implements Account.Listener {
             LinearLayout t = column(this);
             t.setPaddingRelative(dp(this, 12), 0, 0, 0);
             t.addView(title(this, acc.name(), 15));
-            t.addView(single(monoText(this, signed ? (acc.opencode() ? getString(R.string.onboarding_agent_ready,
+            t.addView(single(monoText(this, signed ? (acc.terminalAuth() ? getString(R.string.onboarding_agent_ready,
                     acc.plan.isEmpty() ? getString(R.string.onboarding_agent_free_models) : acc.planLabel())
                     : acc.email.isEmpty() ? getString(R.string.onboarding_agent_signed_in)
                     : getString(R.string.onboarding_agent_signed_in_as, acc.email))
@@ -374,17 +376,19 @@ public class OnboardingActivity extends Screen implements Account.Listener {
                 TextView how = text(this, installing ? acc.detail
                         : acc.step == Account.Step.ERROR ? acc.detail
                         : installed ? getString(acc.claude() ? R.string.onboarding_agent_sign_in_claude : acc.opencode()
-                        ? R.string.onboarding_agent_checking_opencode : acc.agy() ? R.string.onboarding_agent_sign_in_agy
+                        ? R.string.onboarding_agent_checking_opencode : acc.kilo() ? R.string.onboarding_agent_checking_kilo
+                        : acc.agy() ? R.string.onboarding_agent_sign_in_agy
                         : acc.grok() ? R.string.onboarding_agent_sign_in_grok : R.string.onboarding_agent_sign_in_codex)
                         : Ui.downloadNote(this, getString(acc.claude() ? R.string.onboarding_agent_download_claude
                         : acc.opencode() ? R.string.onboarding_agent_download_opencode
+                        : acc.kilo() ? R.string.onboarding_agent_download_kilo
                         : acc.agy() ? R.string.onboarding_agent_download_agy
                         : acc.grok() ? R.string.onboarding_agent_download_grok
                         : R.string.onboarding_agent_download_codex)), 14,
                         acc.step == Account.Step.ERROR ? ERR : MUTED);
                 how.setPaddingRelative(0, dp(this, 10), 0, installing ? 0 : dp(this, 10));
                 card.addView(how);
-                if (!installing && !(installed && acc.opencode())) {
+                if (!installing && !(installed && acc.terminalAuth())) {
                     Button b = button(this, installed ? getString(acc.claude() ? R.string.onboarding_sign_in_claude
                             : acc.agy() ? R.string.onboarding_sign_in_google : acc.grok() ? R.string.onboarding_sign_in_grok
                             : R.string.onboarding_sign_in_chatgpt)

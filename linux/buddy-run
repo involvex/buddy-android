@@ -1,6 +1,6 @@
 #!/bin/bash
 # Run by the Buddy app inside its built-in Linux (Alpine, through proot).
-#   buddy-run <token> ask <session> <claude|codex|opencode|agy|grok> <dev:0|1|rule|play> <message> [model] [attachment-ids]
+#   buddy-run <token> ask <session> <claude|codex|opencode|kilo|agy|grok> <dev:0|1|rule|play> <message> [model] [attachment-ids]
 #     (rule: a notification rule's run, working for someone else's message: no shell, files or web tools;
 #      play: the Play version, which has no Linux tools at all)
 #                                    run the agent on the message in that session, streaming events to the bubble
@@ -8,13 +8,13 @@
 #   buddy-run <token> delete <session>     forget that session
 #   buddy-run <token> prune <id,id,...>    remove the folders of chats not in the list
 #   buddy-run <token> ping                 answer the app's setup check
-#   buddy-run <token> procs                list running Claude Code / Codex / OpenCode / Antigravity / Grok processes (buddy_procs)
+#   buddy-run <token> procs                list running Claude Code / Codex / OpenCode / Kilo / Antigravity / Grok processes (buddy_procs)
 #   buddy-run <token> kill <pid>           stop a running Claude Code / Codex process and its children
 #   buddy-run <token> recent               list recent Claude Code / Codex sessions from their history (buddy_recent)
 #   buddy-run <token> transcript <claude|codex> <file>   last messages of a session (buddy_transcript)
 #   buddy-run <token> adopt <session> <claude|codex> <agent-session-id>  continue that session as a Buddy chat
 # Every event sent to the bubble carries "buddy_session" so the app can route it.
-HELPER_VERSION=32
+HELPER_VERSION=33
 set -u
 export PATH=$HOME/.local/bin:$HOME/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # The claude launcher sets BUN_OPTIONS with a path relative to its folder; never inherit a stale one.
@@ -63,7 +63,7 @@ descendants() { # print a pid and all its descendants
 }
 
 
-# Is this pid an agent process (the real claude / codex / opencode / agy / grok program)?
+# Is this pid an agent process (the real claude / codex / opencode / kilo / agy / grok program)?
 agent_of() {
   local cmd
   cmd=$(tr '\0' ' ' < "/proc/$1/cmdline" 2>/dev/null) || return 1
@@ -71,6 +71,7 @@ agent_of() {
     */claude/versions/*) echo claude ;;
     */codex-linux-*/*|*/bin/codex) echo codex ;;
     */opencode-ai/*|*/@opencode/cli*/*|*/bin/opencode) echo opencode ;;
+    */@kilocode/cli*/*|*/bin/kilo) echo kilo ;;
     */antigravity-cli/bin/*|*/bin/agy) echo agy ;;
     grok|*/bin/grok|*/grok-linux-*) echo grok ;;
     *) return 1 ;;
@@ -79,14 +80,15 @@ agent_of() {
 
 case "$CMD" in
   ping) # setup check: proves RUN_COMMAND, the helper and the callback all work
-    agents=$({ have claude && echo claude; have codex && echo codex; have opencode && echo opencode; have agy && echo agy
-      have grok && echo grok; } | paste -sd, -)
-    # signed in = the agent's saved login exists (OpenCode works without one: its free models)
+    agents=$({ have claude && echo claude; have codex && echo codex; have opencode && echo opencode; have kilo && echo kilo
+      have agy && echo agy; have grok && echo grok; } | paste -sd, -)
+    # signed in = the agent's saved login exists (OpenCode/Kilo work without one: free / gateway models)
     # (or Claude Code's API key in its settings' env; Codex keeps an API key in auth.json too)
     # (or an API key service saved in Buddy that the agent can use: $D/providers, without the keys)
     signed=$({ { [ -s "$HOME/.claude/.credentials.json" ] || grep -qs '"anthropic":true' "$D"/providers/*.json; } && echo claude
       { [ -s "$HOME/.codex/auth.json" ] || grep -qs '"openai":"responses"' "$D"/providers/*.json; } && echo codex
-      have opencode && echo opencode; [ -s "$HOME/.gemini/antigravity-cli/antigravity-oauth-token" ] && echo agy
+      have opencode && echo opencode; have kilo && echo kilo
+      [ -s "$HOME/.gemini/antigravity-cli/antigravity-oauth-token" ] && echo agy
       [ -s "$HOME/.grok/auth.json" ] && echo grok; } | paste -sd, -)
     # Claude Code's own model list (what its /model shows), asked from Claude Code itself over its control protocol:
     # about 3 s, sends no message. Rows [id, name, effort levels]; the "default" row tells which model its default is.
@@ -109,6 +111,8 @@ case "$CMD" in
     # never updated and new free models didn't show). On failure the last good list is kept.
     have opencode && timeout 30 opencode models $(oc2 && echo --standalone) >"$D/opencode-models.new" 2>/dev/null \
       && [ -s "$D/opencode-models.new" ] && mv "$D/opencode-models.new" "$D/opencode-models"
+    have kilo && timeout 30 kilo models >"$D/kilo-models.new" 2>/dev/null \
+      && [ -s "$D/kilo-models.new" ] && mv "$D/kilo-models.new" "$D/kilo-models"
     # Antigravity's models ("id<TAB>name" lines; the list depends on the account's plan)
     if have agy && [ -s "$HOME/.gemini/antigravity-cli/antigravity-oauth-token" ]; then
       timeout 30 agy models >"$D/agy-models.new" 2>/dev/null && grep -q "$(printf '\t')" "$D/agy-models.new" \
@@ -122,9 +126,11 @@ case "$CMD" in
     fi
     gm=$(jq -Rsc 'split("\n") | map(capture("^\\s*[*-]\\s+(?<id>[A-Za-z0-9._-]+)") | [.id, .id])' "$D/grok-models" 2>/dev/null)
     om=$(jq -Rsc 'split("\n") | map(select(test("^[A-Za-z0-9._-]+/\\S+$"))) | map([., (split("/") | .[1:] | join("/"))])' "$D/opencode-models" 2>/dev/null)
+    km=$(jq -Rsc 'split("\n") | map(select(test("^[A-Za-z0-9._-]+/\\S+$"))) | map([., (split("/") | .[1:] | join("/"))])' "$D/kilo-models" 2>/dev/null)
     jq -cn --arg s "${agents:-none}" --arg g "${signed:-none}" --argjson v "$HELPER_VERSION" --argjson cm "${cm:-[]}" \
-      --argjson om "${om:-[]}" --argjson am "${am:-[]}" --argjson gm "${gm:-[]}" --argjson lm "${lm:-[]}" --arg ld "${ld:-}" \
-      '{type:"buddy_pong",text:$s,signed:$g,helper:$v,claude_models:$lm,claude_default:$ld,codex_models:$cm,opencode_models:$om,agy_models:$am,grok_models:$gm}' | post
+      --argjson om "${om:-[]}" --argjson km "${km:-[]}" --argjson am "${am:-[]}" --argjson gm "${gm:-[]}" \
+      --argjson lm "${lm:-[]}" --arg ld "${ld:-}" \
+      '{type:"buddy_pong",text:$s,signed:$g,helper:$v,claude_models:$lm,claude_default:$ld,codex_models:$cm,opencode_models:$om,kilo_models:$km,agy_models:$am,grok_models:$gm}' | post
     exit 0 ;;
   procs)
     # map every process started by a Buddy chat to that chat
@@ -135,7 +141,7 @@ case "$CMD" in
       for q in $(descendants "$(cat "$f")"); do owner[$q]=$sid; done
     done
     {
-      for p in $(pgrep -f 'claude/versions/|codex-linux-|/bin/codex|opencode-ai/|@opencode/cli|/bin/opencode|antigravity-cli/bin/|/bin/agy|^grok( |$)|/bin/grok|grok-linux-' 2>/dev/null); do
+      for p in $(pgrep -f 'claude/versions/|codex-linux-|/bin/codex|opencode-ai/|@opencode/cli|/bin/opencode|@kilocode/cli|/bin/kilo|antigravity-cli/bin/|/bin/agy|^grok( |$)|/bin/grok|grok-linux-' 2>/dev/null); do
         a=$(agent_of "$p") || continue
         [ "$p" = "$$" ] && continue
         cwd=$(readlink "/proc/$p/cwd" 2>/dev/null)
@@ -245,6 +251,9 @@ case "$CMD" in
       for o in $(cat "$S/opencode-session" "$S/opencode-session.old" 2>/dev/null); do
         [[ "$o" =~ ^[A-Za-z0-9_-]+$ ]] && have opencode && timeout 30 opencode session delete $(oc2 && echo --standalone) "$o" >/dev/null 2>&1
       done
+      for o in $(cat "$S/kilo-session" "$S/kilo-session.old" 2>/dev/null); do
+        [[ "$o" =~ ^[A-Za-z0-9_-]+$ ]] && have kilo && timeout 30 kilo session delete "$o" >/dev/null 2>&1
+      done
     fi
     rm -rf "${S:?}"
     exit 0 ;;
@@ -302,6 +311,7 @@ if [ "${FRESH:-}" = fresh ]; then
     claude) cat "$S/claude-session" >> "$S/claude-session.old" 2>/dev/null; echo >> "$S/claude-session.old"; rm -f "$S/claude-session" ;;
     codex) cat "$S/codex-thread" >> "$S/codex-thread.old" 2>/dev/null; echo >> "$S/codex-thread.old"; rm -f "$S/codex-thread" ;;
     opencode) cat "$S/opencode-session" >> "$S/opencode-session.old" 2>/dev/null; echo >> "$S/opencode-session.old"; rm -f "$S/opencode-session" ;;
+    kilo) cat "$S/kilo-session" >> "$S/kilo-session.old" 2>/dev/null; echo >> "$S/kilo-session.old"; rm -f "$S/kilo-session" ;;
     agy) rm -f "$S/agy-conversation" "$S/agy-conversation.new" ;;
     grok) rm -f "$S/grok-session" ;;
   esac
@@ -564,7 +574,7 @@ run_opencode() {
   # OpenCode names MCP tools <server>_<tool>; small models otherwise call "read_screen" and give up
   printf '%s\n\n%s\n' "$SYSTEM" "In this app the phone tools are named with a phone_ prefix: phone_read_screen, phone_tap, \
 phone_long_press, phone_type_text, phone_scroll, phone_swipe, phone_press, phone_open_app, phone_list_apps, phone_open_url, \
-phone_screenshot, phone_wait, phone_confirm, phone_ask, phone_notify, phone_reply_notification, phone_schedule_message, phone_list_scheduled, phone_cancel_scheduled, phone_update_buddy, phone_install_apk and phone_wait_for_install\
+phone_screenshot, phone_wait, phone_confirm, phone_ask, phone_notify, phone_reply_notification, phone_schedule_message, phone_list_scheduled, phone_cancel_scheduled, phone_update_buddy, phone_install_apk, phone_wait_for_install and phone_run_termux\
 $([ "$BROWSER" = 1 ] && printf '%s' ", and for the background browser phone_browser_open, phone_browser_read, phone_browser_click, \
 phone_browser_type, phone_browser_scroll, phone_browser_screenshot, phone_browser_back and phone_browser_tabs"). Always call them by \
 these exact names. Right at the start of a chat they can still be connecting: if one answers that there is no such \
@@ -657,6 +667,98 @@ stream_opencode() {
     esac
   done
   # OpenCode 2 sometimes ends without the last step_finish: still show the answer
+  if [ -n "$pending" ] && [ -z "$failed" ]; then
+    jq -cn --arg t "$pending" --arg s "$SID" '{type:"assistant", message:{content:[{type:"text", text:$t}]}, buddy_session:$s}' | post
+    jq -cn --arg s "$SID" '{type:"result", subtype:"success", result:"", buddy_session:$s}' | post
+  fi
+}
+
+# -------------------------------------------------------------------- Kilo (OpenCode fork: kilo run --format json)
+run_kilo() {
+  printf '%s\n\n%s\n' "$SYSTEM" "In this app the phone tools are named with a phone_ prefix: phone_read_screen, phone_tap, \
+phone_long_press, phone_type_text, phone_scroll, phone_swipe, phone_press, phone_open_app, phone_list_apps, phone_open_url, \
+phone_screenshot, phone_wait, phone_confirm, phone_ask, phone_notify, phone_reply_notification, phone_schedule_message, phone_list_scheduled, phone_cancel_scheduled, phone_update_buddy, phone_install_apk, phone_wait_for_install and phone_run_termux\
+$([ "$BROWSER" = 1 ] && printf '%s' ", and for the background browser phone_browser_open, phone_browser_read, phone_browser_click, \
+phone_browser_type, phone_browser_scroll, phone_browser_screenshot, phone_browser_back and phone_browser_tabs"). Always call them by \
+these exact names. Right at the start of a chat they can still be connecting: if one answers that there is no such \
+tool, it's not missing, call it again in your next step." > "$S/system.md"
+  local g=$HOME/.config/kilo/AGENTS.md
+  if [ ! -s "$g" ] || head -1 "$g" | grep -q '^<!-- buddy -->'; then
+    mkdir -p "${g%/*}" && { echo '<!-- buddy -->'; cat "$S/system.md"; } > "$g"
+  fi
+  # also seed OpenCode's path: Kilo may still read it
+  local og=$HOME/.config/opencode/AGENTS.md
+  if [ ! -s "$og" ] || head -1 "$og" | grep -q '^<!-- buddy -->'; then
+    mkdir -p "${og%/*}" && { echo '<!-- buddy -->'; cat "$S/system.md"; } > "$og"
+  fi
+  local cfg
+  cfg=$(jq -cn --arg url "$URL/mcp?chat=$SID" --arg base "$URL/mcpx/" --arg auth "Bearer $TOKEN" --arg sys "$S/system.md" \
+    --arg dev "$DEV" --argjson x "$EXTRA" '
+    {type:"remote", url:$url, headers:{Authorization:$auth}, oauth:false} as $phone
+    | ({phone:$phone} + ($x | map({key:.name, value:($phone + {url:($base + .name)})}) | from_entries)) as $all
+    | {mcp:{servers:($all | map_values(. + {codemode:false, timeout:{execution:600000}}))}}
+    + {instructions:[$sys], autoupdate:false, share:"disabled"}
+    + (if $dev == "1" then {} elif $dev == "rule" then {permission:{bash:"ask", edit:"ask", webfetch:"ask"}}
+       else {permission:{bash:"ask", edit:"ask"}} end)')
+  if [ -n "$SVC" ]; then
+    cfg=$(jq -c --argjson c "$cfg" --arg url "$URL/llm/$SVC" --arg t "$TOKEN" --arg id "buddy-$SVC" '
+      (if .local == true then {timeout:900000} else {} end) as $wait
+      | (if .openai != "" then {npm:"@ai-sdk/openai-compatible", options:({baseURL:($url + "/o"), apiKey:$t} + $wait)}
+       else {npm:"@ai-sdk/anthropic", options:({baseURL:($url + "/a/v1"), apiKey:$t} + $wait)} end) as $p
+      | $c + {provider:{($id):($p + {name:.name, models:(.models | with_entries(.value = ({name:.value.name}
+          + (if .value.window > 0 then {limit:{context:.value.window, output:([.value.window / 4, 32000] | min | floor)}}
+             else {} end))))})}}' "$D/providers/$SVC.json") || return 1
+  fi
+  local args=(run --format json)
+  [ -s "$S/kilo-session" ] && args+=(-s "$(cat "$S/kilo-session")")
+  [ -n "$SVC" ] && MODEL="buddy-$SVC/$SVCM"
+  [ -n "${MODEL:-}" ] && args+=(-m "$MODEL")
+  local f
+  for f in "${ATT[@]}"; do args+=(-f "$f"); done
+  cd "$W" && OPENCODE_CONFIG_CONTENT=$cfg KILO_CONFIG_CONTENT=$cfg kilo "${args[@]}" -- "$MSG" </dev/null 2>"$S/last-error.log"
+}
+
+stream_kilo() {
+  local pending="" failed="" line sid typ t
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    [ "$line" = "$AGENT_END" ] && break
+    sid=$(printf '%s' "$line" | jq -r '.sessionID // empty' 2>/dev/null)
+    [ -n "$sid" ] && printf '%s' "$sid" > "$S/kilo-session"
+    typ=$(printf '%s' "$line" | jq -r '.type // empty' 2>/dev/null)
+    [ "$typ" = error ] && failed=1
+    case "$typ" in
+      step_start) pending="" ;;
+      text)
+        t=$(printf '%s' "$line" | jq -r '.part.text // "" | gsub("(?s)<think>.*?</think>"; "") | split("</think>") | last
+          | sub("^\\s+"; "") | sub("\\s+$"; "")' 2>/dev/null)
+        [ -n "$t" ] && pending="${pending:+$pending$'\n\n'}$t" ;;
+      step_finish)
+        if [ "$(printf '%s' "$line" | jq -r '.part.reason // empty' 2>/dev/null)" = stop ]; then
+          [ -n "$pending" ] && jq -cn --arg t "$pending" --arg s "$SID" \
+            '{type:"assistant", message:{content:[{type:"text", text:$t}]}, buddy_session:$s}' | post
+          jq -cn --arg s "$SID" '{type:"result", subtype:"success", result:"", buddy_session:$s}' | post
+        fi
+        pending="" ;;
+      tool_use|error)
+        printf '%s' "$line" | jq -c --arg s "$SID" '
+          (if .type == "tool_use" and .part.tool == "invalid" then empty
+          elif .type == "tool_use" and .part.tool == "execute" then empty
+          elif .type == "tool_use" then
+            (.part.tool // "") as $t
+            | {type:"assistant", message:{content:[{type:"tool_use",
+                name:(if ($t | startswith("phone_")) then "mcp__phone__" + ($t | ltrimstr("phone_"))
+                      elif ($t == "bash" or $t == "shell") then "Bash" elif ($t == "edit" or $t == "write" or $t == "patch") then "Edit"
+                      elif $t == "read" then "Read" else $t end),
+                input:((.part.state.input // {}) + (if ($t == "phone_confirm" or $t == "phone_ask")
+                  then {_answer:(.part.state.output // "")} else {} end))}]}}
+          else
+            {type:"result", subtype:"error", is_error:true,
+             result:((.error.data.message // .error.message // .error.name // .error.type // "error") as $m
+               | "Kilo: " + $m)}
+          end) | . + {buddy_session:$s}' 2>/dev/null | while IFS= read -r ev; do printf '%s' "$ev" | post; done ;;
+    esac
+  done
   if [ -n "$pending" ] && [ -z "$failed" ]; then
     jq -cn --arg t "$pending" --arg s "$SID" '{type:"assistant", message:{content:[{type:"text", text:$t}]}, buddy_session:$s}' | post
     jq -cn --arg s "$SID" '{type:"result", subtype:"success", result:"", buddy_session:$s}' | post
@@ -979,6 +1081,16 @@ fi
       status=${PIPESTATUS[0]}
     fi
     name=OpenCode
+  elif [ "$BACKEND" = kilo ]; then
+    if ! have kilo; then event buddy_error "Kilo isn't installed yet. Install it in Buddy's Settings."; exit 0; fi
+    ended run_kilo | stream_kilo
+    status=${PIPESTATUS[0]}
+    if [ "$status" -ne 0 ] && [ -s "$S/kilo-session" ] && grep -q -i -E 'not found|no such|session' "$S/last-error.log" 2>/dev/null; then
+      rm -f "$S/kilo-session"
+      ended run_kilo | stream_kilo
+      status=${PIPESTATUS[0]}
+    fi
+    name=Kilo
   elif [ "$BACKEND" = agy ]; then
     if ! have agy; then event buddy_error "Antigravity isn't installed yet. Install it in Buddy's Settings."; exit 0; fi
     # a rule's run must get no shell, files or web; agy's allow list can't promise that yet (see Account.runsRules)

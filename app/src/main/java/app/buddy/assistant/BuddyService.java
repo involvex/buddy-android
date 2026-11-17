@@ -85,6 +85,7 @@ public class BuddyService extends AccessibilityService implements McpServer.Hand
         Models.setClaudeDefault(Prefs.claudeDefault(this));
         Models.set("codex", Prefs.codexModels(this));
         Models.set("opencode", Prefs.opencodeModels(this));
+        Models.set("kilo", Prefs.kiloModels(this));
         Models.set("agy", Prefs.agyModels(this));
         Models.set("grok", Prefs.grokModels(this));
         new Thread(() -> Attachments.cleanup(this)).start();
@@ -527,6 +528,11 @@ public class BuddyService extends AccessibilityService implements McpServer.Hand
             if (om != null && om.length() > 0) {
                 Prefs.setOpencodeModels(this, om.toString());
                 Models.set("opencode", om.toString());
+            }
+            org.json.JSONArray km = event.optJSONArray("kilo_models");
+            if (km != null && km.length() > 0) {
+                Prefs.setKiloModels(this, km.toString());
+                Models.set("kilo", km.toString());
             }
             org.json.JSONArray am = event.optJSONArray("agy_models");
             if (am != null && am.length() > 0) {

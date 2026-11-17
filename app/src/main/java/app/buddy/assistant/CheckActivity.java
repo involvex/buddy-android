@@ -220,6 +220,7 @@ public class CheckActivity extends Screen {
         switch (agent) {
             case "codex": return "chatgpt.com";
             case "opencode": return "opencode.ai";
+            case "kilo": return "kilo.ai";
             case "agy": return "generativelanguage.googleapis.com";
             case "grok": return "api.x.ai";
             default: return "api.anthropic.com";

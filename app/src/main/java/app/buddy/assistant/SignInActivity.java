@@ -103,11 +103,13 @@ public class SignInActivity extends Screen implements Account.Listener {
                 header(R.drawable.ms_terminal, getString(R.string.signin_install, acc.name()), getString(acc.claude()
                         ? R.string.signin_install_sub_claude
                         : acc.opencode() ? R.string.signin_install_sub_opencode
+                        : acc.kilo() ? R.string.signin_install_sub_kilo
                         : acc.agy() ? R.string.signin_install_sub_agy
                         : acc.grok() ? R.string.signin_install_sub_grok
                         : R.string.signin_install_sub_codex), false);
                 note(Ui.downloadNote(this, getString(acc.claude() ? R.string.signin_install_size_claude
                         : acc.opencode() ? R.string.signin_install_size_opencode
+                        : acc.kilo() ? R.string.signin_install_size_kilo
                         : acc.agy() ? R.string.signin_install_size_agy
                         : acc.grok() ? R.string.signin_install_size_grok
                         : R.string.signin_install_size_codex)));
@@ -120,8 +122,8 @@ public class SignInActivity extends Screen implements Account.Listener {
                 note(getString(R.string.signin_install_wait));
                 break;
             case SIGNED_OUT:
-                if (acc.opencode()) {
-                    openCodeReady();
+                if (acc.terminalAuth()) {
+                    terminalAuthReady();
                     break;
                 }
                 header(R.drawable.ms_shield_person, getString(acc.claude() ? R.string.signin_title_claude
@@ -164,8 +166,8 @@ public class SignInActivity extends Screen implements Account.Listener {
                 spinnerRow();
                 break;
             case SIGNED_IN:
-                if (acc.opencode()) {
-                    openCodeReady();
+                if (acc.terminalAuth()) {
+                    terminalAuthReady();
                     break;
                 }
                 boolean keyOnly = (acc.claude() || "codex".equals(acc.agent)) && acc.apiKey && !acc.planIn;
@@ -214,18 +216,27 @@ public class SignInActivity extends Screen implements Account.Listener {
         }
     }
 
-    /** OpenCode is installed: nothing to sign in to. Providers are connected with `opencode auth login` in the terminal. */
-    private void openCodeReady() {
+    /** OpenCode / Kilo: installed means ready; providers via terminal auth. */
+    private void terminalAuthReady() {
         boolean free = acc.plan.isEmpty() || "free models".equals(acc.plan); // Account's marker, not display text
-        header(R.drawable.ms_check, getString(R.string.signin_opencode_ready), free
-                ? getString(R.string.signin_opencode_free)
-                : getString(R.string.signin_opencode_connected, acc.plan), true);
-        note(getString(R.string.signin_opencode_connect_note, "opencode auth login", "opencode auth logout"));
+        if (acc.kilo()) {
+            header(R.drawable.ms_check, getString(R.string.signin_kilo_ready), free
+                    ? getString(R.string.signin_kilo_free)
+                    : getString(R.string.signin_kilo_connected, acc.plan), true);
+            note(getString(R.string.signin_kilo_connect_note, "kilo auth login", "kilo auth logout"));
+        } else {
+            header(R.drawable.ms_check, getString(R.string.signin_opencode_ready), free
+                    ? getString(R.string.signin_opencode_free)
+                    : getString(R.string.signin_opencode_connected, acc.plan), true);
+            note(getString(R.string.signin_opencode_connect_note, "opencode auth login", "opencode auth logout"));
+        }
         versionNote();
         primary(getString(R.string.signin_done), v -> finish());
         updateButton();
+        final String run = acc.kilo() ? "kilo auth login"
+                : (acc.opencode2 ? "opencode auth login --standalone" : "opencode auth login");
         secondary(getString(R.string.signin_connect_provider), v -> startActivity(new Intent(this, TerminalActivity.class)
-                .putExtra("run", acc.opencode2 ? "opencode auth login --standalone" : "opencode auth login")));
+                .putExtra("run", run)));
     }
 
     /** The installed version, and what the last update did. */

@@ -28,9 +28,12 @@
     <!-- the location tool, asked for the first time it's used (not in the Play build) -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!-- Optional: run commands in the user's InVxTermux install (Tools.run_termux) -->
+    <uses-permission android:name="com.involvex.termux_app.permission.RUN_COMMAND" />
 
     <!-- Needed on Android 11+ to see launchable apps for open_app / list_apps -->
     <queries>
+        <package android:name="com.involvex.termux_app" />
         <!-- the home app, to fold the bubble panel when Recents or Home opens -->
         <intent>
             <action android:name="android.intent.action.MAIN" />

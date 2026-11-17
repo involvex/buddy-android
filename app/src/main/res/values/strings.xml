@@ -43,6 +43,7 @@
     <string name="onboarding_brain_claude">Uses your Claude subscription (Pro or Max).</string>
     <string name="onboarding_brain_codex">Uses your ChatGPT plan.</string>
     <string name="onboarding_brain_opencode">No account needed. Connect your own providers later.</string>
+    <string name="onboarding_brain_kilo">Kilo CLI and Gateway. Auth in the terminal; 500+ models.</string>
     <string name="onboarding_brain_local_title">Local model</string>
     <string name="onboarding_brain_local">Ollama, LM Studio or llama.cpp on your own computer. Nothing goes to an AI company. Runs through OpenCode.</string>
     <string name="onboarding_access_privacy_local">With a local model, what the agent reads on your screen goes to your own server, not to an AI company. Sending, posting, buying and deleting always ask for your OK first.</string>
@@ -107,6 +108,7 @@
     <!-- Agent card help text. "Authorize" = the button on Claude's sign-in web page (the page may be in English). -->
     <string name="onboarding_agent_sign_in_claude">Sign in with your Claude account. Your browser opens; tap Authorize and Buddy comes back by itself.</string>
     <string name="onboarding_agent_checking_opencode">Checking OpenCode…</string>
+    <string name="onboarding_agent_checking_kilo">Checking Kilo…</string>
     <string name="onboarding_agent_sign_in_codex">Sign in with your ChatGPT account in the browser, then come back.</string>
     <!-- Antigravity: the sign-in page shows a code that Buddy reads by itself. -->
     <string name="onboarding_agent_sign_in_agy">Sign in with your Google account. Your browser opens; sign in there and Buddy picks up the code by itself.</string>
@@ -115,6 +117,7 @@
     <!-- "Buddy's Linux" = the small Linux system built into Buddy. -->
     <string name="onboarding_agent_download_claude">Downloads about 235 MB once (Buddy\'s Linux and Claude Code from Anthropic).</string>
     <string name="onboarding_agent_download_opencode">Downloads about 230 MB once (Buddy\'s Linux, Node.js and OpenCode). No account needed.</string>
+    <string name="onboarding_agent_download_kilo">Downloads about 250 MB once (Buddy\'s Linux, Node.js and Kilo CLI). Sign in to the Gateway in the terminal when you want.</string>
     <string name="onboarding_agent_download_codex">Downloads about 150 MB once (Buddy\'s Linux, Node.js and Codex from OpenAI).</string>
     <string name="onboarding_agent_download_agy">Downloads about 200 MB once (Buddy\'s Linux and the Antigravity CLI from Google).</string>
     <string name="onboarding_agent_download_grok">Downloads about 170 MB once (Buddy\'s Linux and Grok Build from xAI).</string>
@@ -939,12 +942,14 @@
     <string name="signin_install">Install %1$s</string>
     <string name="signin_install_sub_claude">Runs Claude Code inside Buddy on your Claude subscription.</string>
     <string name="signin_install_sub_opencode">Runs OpenCode inside Buddy. Its free models work right away, no account needed; connect your own providers (Anthropic, OpenAI, GitHub Copilot…) anytime.</string>
+    <string name="signin_install_sub_kilo">Runs Kilo CLI inside Buddy. Use Kilo Gateway or your own providers; connect them in Buddy\'s terminal with kilo auth login.</string>
     <string name="signin_install_sub_codex">Runs Codex inside Buddy on your ChatGPT plan.</string>
     <string name="signin_install_sub_agy">Runs Google\'s Antigravity CLI inside Buddy on your Google account: its free plan, or Google AI Pro or Ultra.</string>
     <string name="signin_install_sub_grok">Runs xAI\'s Grok Build inside Buddy on your Grok account (signing in with Google or X works).</string>
     <!-- "Buddy's Linux" = the small Linux system Buddy installs inside the app. -->
     <string name="signin_install_size_claude">Downloads about 235 MB once: Buddy\'s Linux and Claude Code from Anthropic. Use Wi-Fi if you can.</string>
     <string name="signin_install_size_opencode">Downloads about 230 MB once: Buddy\'s Linux, Node.js and OpenCode. Use Wi-Fi if you can.</string>
+    <string name="signin_install_size_kilo">Downloads about 250 MB once: Buddy\'s Linux, Node.js and Kilo CLI. Use Wi-Fi if you can.</string>
     <string name="signin_install_size_codex">Downloads about 150 MB once: Buddy\'s Linux, Node.js and Codex from OpenAI. Use Wi-Fi if you can.</string>
     <string name="signin_install_size_agy">Downloads about 200 MB once: Buddy\'s Linux and the Antigravity CLI from Google. Use Wi-Fi if you can.</string>
     <string name="signin_install_size_grok">Downloads about 170 MB once: Buddy\'s Linux and Grok Build from xAI. Use Wi-Fi if you can.</string>
@@ -1051,6 +1056,10 @@
     <string name="signin_sign_out_title">Sign out of %1$s?</string>
     <string name="signin_sign_out_text">%1$s in Buddy stops working until you sign in again.</string>
     <string name="signin_opencode_ready">OpenCode is ready</string>
+    <string name="signin_kilo_ready">Kilo is ready</string>
+    <string name="signin_kilo_free">Using Kilo without a Gateway login yet. Connect with kilo auth login in Buddy\'s terminal for Gateway models, or add your own keys there.</string>
+    <string name="signin_kilo_connected">Connected: %1$s.</string>
+    <string name="signin_kilo_connect_note">Connecting opens Buddy\'s terminal with %1$s. To remove a provider later, run %2$s there.</string>
     <!-- "model chip" = the button at the top of a chat that shows the agent and model. -->
     <string name="signin_opencode_free">Using OpenCode\'s free models. Pick one per chat with the model chip, or connect your own provider.</string>
     <!-- %1$s = connected providers, comma-separated (e.g. "anthropic, openai"). -->
@@ -1076,6 +1085,7 @@
     <!-- One line under the agent's name in the agent pickers. -->
     <string name="account_tagline_claude">Uses your Claude plan</string>
     <string name="account_tagline_opencode">No account, or your own providers</string>
+    <string name="account_tagline_kilo">Kilo Gateway, or your own providers</string>
     <string name="account_tagline_codex">Uses your ChatGPT plan</string>
     <string name="account_tagline_agy">Uses your Google account</string>
     <string name="account_tagline_grok">Uses your Grok account</string>
@@ -1094,6 +1104,7 @@
     <string name="account_install_no_space">There isn\'t enough free space on the phone. Free up about 1 GB and try again.</string>
     <string name="account_install_network">Buddy couldn\'t reach the download server. Check Wi-Fi or mobile data (or a VPN or private DNS that blocks it) and try again.</string>
     <string name="account_install_refused">The download server turned the request down or asked to slow down. Try again in a few minutes.</string>
+    <string name="account_install_native_lib">The agent\'s native binary failed to load (a missing shared library). Retry on Wi-Fi so the Alpine musl build downloads fully, or reinstall the agent.</string>
     <string name="account_install_space_needed">Only %1$s free. Installing an agent needs about 1 GB: free up some space and try again.</string>
     <string name="signin_details">Details</string>
     <!-- Update progress and result. %1$s = agent name: checking for a newer version of it. -->
@@ -1122,6 +1133,7 @@
     <string name="models_default_claude">Claude Code picks it from your plan; shown here after the first message</string>
     <string name="models_default_codex">Codex picks it; shown here after the next reply</string>
     <string name="models_default_opencode">OpenCode\'s default model</string>
+    <string name="models_default_kilo">Kilo\'s default model</string>
     <string name="models_default_agy">Antigravity\'s default model</string>
     <string name="models_default_grok">Grok\'s default model</string>
     <!-- Effort levels in a row of up to 6 segments: keep each very short (about 5 characters).
@@ -1215,6 +1227,7 @@
     <string name="setup_step_install_claude">Buddy downloads its own small Linux and %1$s from Anthropic (about 235 MB).</string>
     <!-- %1$s = OpenCode. -->
     <string name="setup_step_install_opencode">Buddy downloads its own small Linux and %1$s (about 230 MB with Node.js).</string>
+    <string name="setup_step_install_kilo">Buddy downloads its own small Linux and %1$s (about 250 MB with Node.js).</string>
     <!-- %1$s = Codex. -->
     <string name="setup_step_install_codex">Buddy downloads its own small Linux and %1$s from OpenAI (about 150 MB).</string>
     <string name="setup_step_install_grok">Buddy downloads its own small Linux and %1$s from xAI (about 170 MB).</string>
@@ -1224,6 +1237,8 @@
     <string name="setup_step_signin_title">Sign in</string>
     <string name="setup_step_signin_opencode_done">No sign-in needed: OpenCode\'s free models work right away. Connect your own providers anytime.</string>
     <string name="setup_step_signin_opencode">No sign-in needed for OpenCode\'s free models.</string>
+    <string name="setup_step_signin_kilo_done">Kilo is installed. Connect to Kilo Gateway or your providers in Buddy\'s terminal anytime.</string>
+    <string name="setup_step_signin_kilo">Install Kilo, then connect Gateway or providers in the terminal with kilo auth login.</string>
     <string name="setup_step_signin_done">Signed in.</string>
     <!-- %1$s = the account's email address. -->
     <string name="setup_step_signin_done_email">Signed in as %1$s.</string>
@@ -2092,8 +2107,13 @@
     <string name="background_shell_ask_info">An approval card shows the command first. Without it, nothing stands between a tricked agent and your phone: a command can even tap an approval card.</string>
     <!-- Approval card for a phone command; %1$s = the command line. -->
     <string name="tools_card_shell">Run on the phone:\n%1$s</string>
+    <string name="tools_card_termux">Run in Termux:\n%1$s</string>
     <!-- In the bubble while a phone command runs. Keep short. -->
     <string name="activity_shell">Running a phone command</string>
+    <string name="activity_termux">Running a Termux command</string>
+    <string name="setup_termux_run">InVxTermux commands</string>
+    <string name="setup_termux_run_info">Agents can run commands in your InVxTermux app with the run_termux tool. Install InVxTermux, grant Buddy the RUN_COMMAND permission when asked, and in Termux run: echo allow-external-apps=true >> ~/.termux/termux.properties</string>
+    <string name="setup_termux_grant">Grant RUN_COMMAND</string>
     <!-- A step in the chat; %1$s = the command line, shortened. -->
     <string name="hub_tool_phone_shell">Phone command: %1$s</string>
     <!-- Switch in Chat options. "it" = the chat's agent. -->

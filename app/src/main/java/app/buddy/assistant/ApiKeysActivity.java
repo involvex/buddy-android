@@ -22,7 +22,7 @@ import static app.buddy.assistant.Ui.*;
  */
 public class ApiKeysActivity extends Screen {
     /** The agents that can use a service. */
-    private static final String[] AGENTS = {"claude", "codex", "opencode"};
+    private static final String[] AGENTS = {"claude", "codex", "opencode", "kilo"};
 
     private LinearLayout body;
 

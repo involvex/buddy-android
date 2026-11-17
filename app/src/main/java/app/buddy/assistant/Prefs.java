@@ -130,7 +130,7 @@ final class Prefs {
         sp(c).edit().putString("helper", status).putLong("helper_at", System.currentTimeMillis()).apply();
     }
 
-    /** Which agent answers the bubble: "claude" (default), "codex", "opencode", "agy" or "grok". */
+    /** Which agent answers the bubble: "claude" (default), "codex", "opencode", "kilo", "agy" or "grok". */
     static String backend(Context c) {
         return sp(c).getString("backend", "claude");
     }
@@ -505,6 +505,15 @@ final class Prefs {
         sp(c).edit().putString("grok_models", json).apply();
     }
 
+    /** Kilo's model list (`kilo models`), as JSON [[id, name], …]. */
+    static String kiloModels(Context c) {
+        return sp(c).getString("kilo_models", "[]");
+    }
+
+    static void setKiloModels(Context c, String json) {
+        sp(c).edit().putString("kilo_models", json).apply();
+    }
+
     /** First-run guide finished (or skipped). */
     static boolean onboarded(Context c) {
         return sp(c).getBoolean("onboarded", false);
@@ -533,7 +542,7 @@ final class Prefs {
         sp(c).edit().putInt("onboard_step", step).apply();
     }
 
-    /** Which agents the user wants: "claude", "codex", "opencode", "agy", "grok" or "both" (Claude Code and Codex). */
+    /** Which agents the user wants: "claude", "codex", "opencode", "kilo", "agy", "grok" or "both" (Claude Code and Codex). */
     static String agents(Context c) {
         return sp(c).getString("agents", "claude");
     }

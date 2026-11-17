@@ -293,19 +293,21 @@ final class Ui {
         return p;
     }
 
-    /** Each agent's own color (as text on BG/CARD): Claude Code clay, Codex blue, OpenCode green, Antigravity violet. */
+    /** Each agent's own color (as text on BG/CARD): Claude clay, Codex blue, OpenCode green, Kilo gold, Antigravity violet. */
     static int agentColor(String backend) {
         if ("codex".equals(backend)) return DARK ? 0xFF9DB3FF : 0xFF3C5FCC;
         if ("opencode".equals(backend)) return DARK ? 0xFF7FD6A7 : 0xFF23855A;
+        if ("kilo".equals(backend)) return DARK ? 0xFFF0C674 : 0xFFB8860B;
         if ("agy".equals(backend)) return DARK ? 0xFFBFA9FF : 0xFF6A4FD0;
         if ("grok".equals(backend)) return DARK ? 0xFFD7D3CC : 0xFF5A554E;
         return DARK ? 0xFFE89A7C : 0xFFB4532F;
     }
 
-    /** 40×40 tile with "CC" (Claude Code), "CX" (Codex), "OC" (OpenCode), "AG" (Antigravity) or "GK" (Grok), in the agent's color. */
+    /** 40×40 tile with CC/CX/OC/KI/AG/GK in the agent's color. */
     static TextView agentTile(Context c, String backend) {
         TextView t = text(c, "codex".equals(backend) ? "CX" : "opencode".equals(backend) ? "OC"
-                : "agy".equals(backend) ? "AG" : "grok".equals(backend) ? "GK" : "CC", 13, agentColor(backend));
+                : "kilo".equals(backend) ? "KI" : "agy".equals(backend) ? "AG"
+                : "grok".equals(backend) ? "GK" : "CC", 13, agentColor(backend));
         t.setTypeface(sans(c, 700));
         t.setGravity(Gravity.CENTER);
         t.setBackground(rounded(c, Theme.withAlpha(agentColor(backend), 0x29), 14));

@@ -14,7 +14,7 @@
 
 # Buddy
 
-**A floating chat bubble that lets Claude Code, Codex, OpenCode, Antigravity or Grok use your Android phone.**
+**A floating chat bubble that lets Claude Code, Codex, OpenCode, Kilo, Antigravity or Grok use your Android phone.**
 
 Type or say what you want, like "reply to Sam that I'm running late" or "add a Switch 2 to my Amazon cart". Buddy reads the screen, taps and types to get it done, and asks you before anything is sent, posted, bought or deleted.
 
@@ -62,7 +62,7 @@ https://github.com/user-attachments/assets/d07936fc-4788-4ab5-a105-31b3e9aeba4f
 ## How it works
 
 ```
-Buddy app / bubble ──► Buddy's Linux (Alpine via proot): claude, codex, opencode, agy or grok
+Buddy app / bubble ──► Buddy's Linux (Alpine via proot): claude, codex, opencode, kilo, agy or grok
         ▲                                                     │
         └──────────── streamed replies ◄──────────────────────┤
                                                               ▼
@@ -132,7 +132,19 @@ git clone --recurse-submodules https://github.com/ghorbelhamdi/buddy-android.git
 ./build.sh                    # on the phone in Termux, no Gradle → build/buddy-release.apk
 ```
 
-proot and libandroid-shmem are git submodules in `third_party/` (`git submodule update --init` in an existing clone). `build.sh` needs `pkg install openjdk-17 aapt2 d8 apksigner python clang make` and android.jar from platform-36 at `~/android-sdk/android-36/android.jar`. It creates a signing key at `~/.buddy-keys/release.jks` on first run: back it up, since updates must be signed with the same key. Gradle release signing reads `BUDDY_KEYSTORE` and `BUDDY_KEYSTORE_PASSWORD` (optionally `BUDDY_KEY_ALIAS`, `BUDDY_KEY_PASSWORD`). The version lives in `BuildInfo.java`, and the project layout is in [CONTRIBUTING.md](CONTRIBUTING.md#project-layout).
+proot and libandroid-shmem are git submodules in `third_party/` (`git submodule update --init` in an existing clone). Native libraries under `app/src/main/jniLibs/` are **not** in git: build them before any Gradle assemble/install, or the APK cannot start Buddy's Linux.
+
+**Windows (Git Bash + NDK):** install [Git for Windows](https://git-scm.com/download/win) and an Android NDK (e.g. via Android Studio SDK Manager), then:
+
+```
+git submodule update --init
+.\native\build.ps1            # or set ANDROID_NDK_HOME first
+.\gradlew installGithubDebug
+```
+
+(`build.ps1` drives Git Bash with your Windows NDK. WSL works only with a Linux host NDK under `~/Android/Sdk/ndk`.)
+
+Elsewhere: `ANDROID_NDK_HOME=… native/build.sh`, then Gradle as usual. `build.sh` (on-phone) needs `pkg install openjdk-17 aapt2 d8 apksigner python clang make` and android.jar from platform-36 at `~/android-sdk/android-36/android.jar`. It creates a signing key at `~/.buddy-keys/release.jks` on first run: back it up, since updates must be signed with the same key. Gradle release signing reads `BUDDY_KEYSTORE` and `BUDDY_KEYSTORE_PASSWORD` (optionally `BUDDY_KEY_ALIAS`, `BUDDY_KEY_PASSWORD`). The version lives in `BuildInfo.java`, and the project layout is in [CONTRIBUTING.md](CONTRIBUTING.md#project-layout).
 
 ## License
 

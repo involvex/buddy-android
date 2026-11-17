@@ -289,6 +289,16 @@ final class Tools {
                         + "an approval card, a BLOCKED answer or a step the user has to do themselves.",
                 props().put("command", strProp("The command line (run by sh -c)"))
                         .put("timeout_s", intProp("Default 60, max 300")), "command"));
+        t.put(tool("run_termux",
+                "Run a command line inside the user's InVxTermux app (com.involvex.termux_app), not Buddy's Linux and "
+                        + "not adb shell. Use it for Termux packages (pkg), scripts under Termux home, or tooling the "
+                        + "user keeps there. Needs InVxTermux installed, Buddy granted its RUN_COMMAND permission, and "
+                        + "allow-external-apps=true in Termux's ~/.termux/termux.properties. The user approves each "
+                        + "command on a card first (same as phone_shell). Returns exit code and output (last 20,000 "
+                        + "characters).",
+                props().put("command", strProp("The command line (run by Termux's sh)"))
+                        .put("workdir", strProp("Optional working directory inside Termux"))
+                        .put("timeout_s", intProp("Default 60, max 300")), "command"));
         t.put(tool("install_apk",
                 "(Needs Linux tools) Open Android's installer for an APK built in Buddy's Linux, e.g. "
                         + "/root/.buddy/work/myapp/build/app.apk, or served by another app on this phone at a local URL "
@@ -547,6 +557,8 @@ final class Tools {
             }
             case "phone_shell":
                 return text(phoneShell(a));
+            case "run_termux":
+                return text(runTermux(a));
             case "point_out":
                 return text(pointOut(a));
             case "update_buddy":
@@ -665,6 +677,55 @@ final class Tools {
         }
         String out = r[1].length() > 20_000 ? "…" + r[1].substring(r[1].length() - 20_000) : r[1];
         return ("-1".equals(r[0]) ? "Stopped after " + secs + " s without finishing." : "Exit code " + r[0] + ".")
+                + (out.trim().isEmpty() ? " No output." : "\n" + out);
+    }
+
+    /** run_termux: a command in InVxTermux via RUN_COMMAND (user-approved). */
+    private String runTermux(JSONObject a) throws Exception {
+        if (ruleRun()) return "Not available in a notification rule's run. Tell the user what's needed instead.";
+        String cmd = a.getString("command").trim();
+        if (cmd.isEmpty()) return "Give the command.";
+        if (cmd.length() > 4000) {
+            return "That command is too long (4,000 characters at most). Put a script in Termux and run that.";
+        }
+        if (SHELL_NO.matcher(cmd).find()) {
+            return "BLOCKED: run_termux doesn't drive the Android UI or Buddy itself. Use the phone tools for taps "
+                    + "and typing.";
+        }
+        int secs = Math.max(1, Math.min(300, a.optInt("timeout_s", 60)));
+        String workdir = a.optString("workdir", "").trim();
+        if (Prefs.phoneShellAsk(svc) && !Guard.takeApproval(false, "termux: " + cmd)) {
+            String answer = svc.askConfirm(svc.getString(R.string.tools_card_termux, cmd), false);
+            if (!answer.startsWith("APPROVED")) return "Not run. " + answer;
+        }
+        if (!TermuxRunner.installed(svc)) {
+            return "InVxTermux (com.involvex.termux_app) isn't installed. Tell the user to install their Termux fork, "
+                    + "set allow-external-apps=true in ~/.termux/termux.properties, and grant Buddy the RUN_COMMAND "
+                    + "permission.";
+        }
+        if (!TermuxRunner.hasPermission(svc)) {
+            return "Buddy doesn't have InVxTermux's RUN_COMMAND permission yet. Ask the user to open Buddy, accept the "
+                    + "permission prompt (or enable it in Android Settings → Apps → Buddy), and ensure Termux has "
+                    + "allow-external-apps=true.";
+        }
+        svc.showActivity(svc.getString(R.string.activity_termux), null);
+        TermuxRunner.Result r;
+        try {
+            r = TermuxRunner.exec(svc, cmd, workdir, secs);
+        } catch (Exception e) {
+            return "The Termux command couldn't be run: " + e.getMessage() + ".";
+        }
+        if (!r.error.isEmpty() && r.stdout.isEmpty() && r.stderr.isEmpty()) {
+            return "Termux error: " + r.error
+                    + (r.error.toLowerCase(java.util.Locale.US).contains("external")
+                    ? " Set allow-external-apps=true in ~/.termux/termux.properties inside Termux."
+                    : "");
+        }
+        String combined = r.stdout;
+        if (!r.stderr.trim().isEmpty()) combined = (combined.isEmpty() ? "" : combined + "\n") + r.stderr;
+        if (!r.error.trim().isEmpty()) combined = (combined.isEmpty() ? "" : combined + "\n") + r.error;
+        String out = combined.length() > 20_000 ? "…" + combined.substring(combined.length() - 20_000) : combined;
+        return (r.exitCode < 0 ? "Stopped after " + secs + " s without finishing." : "Exit code " + r.exitCode + ".")
                 + (out.trim().isEmpty() ? " No output." : "\n" + out);
     }
 

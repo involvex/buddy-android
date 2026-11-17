@@ -7,6 +7,20 @@ val buildInfo = file("src/main/java/app/buddy/assistant/BuildInfo.java").readTex
 val appVersionName = Regex("""VERSION = "([^"]+)"""").find(buildInfo)!!.groupValues[1]
 val appVersionCode = Regex("""VERSION_CODE = (\d+)""").find(buildInfo)!!.groupValues[1].toInt()
 
+// proot and friends are gitignored under jniLibs/; without them the APK cannot start Buddy's Linux.
+val jniProot = file("src/main/jniLibs/arm64-v8a/libproot.so")
+tasks.matching { it.name.startsWith("assemble") || it.name.startsWith("install") }.configureEach {
+    doFirst {
+        if (!jniProot.isFile) {
+            throw GradleException(
+                "Missing ${jniProot.path}. Build natives first: on Windows run .\\native\\build.ps1 " +
+                    "(WSL2 + NDK); elsewhere run ANDROID_NDK_HOME=… native/build.sh. " +
+                    "Also: git submodule update --init"
+            )
+        }
+    }
+}
+
 android {
     // proot for the built-in Linux ships as native libraries and must be extracted to disk to run
     packaging {
