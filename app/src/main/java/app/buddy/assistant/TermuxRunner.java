@@ -21,10 +21,12 @@ import java.util.concurrent.atomic.AtomicReference;
 final class TermuxRunner {
     static final String PACKAGE = "com.involvex.termux_app";
     static final String PERMISSION = PACKAGE + ".permission.RUN_COMMAND";
-    private static final String SERVICE = PACKAGE + ".app.RunCommandService";
+    // applicationId is com.involvex.termux_app, but Java classes live under com.invapp (namespace).
+    // setClassName(PACKAGE, PACKAGE + ".app.RunCommandService") never starts the real service.
+    private static final String SERVICE = "com.invapp.app.RunCommandService";
     private static final String ACTION = PACKAGE + ".RUN_COMMAND";
     private static final String EXTRA_COMMAND_PATH = PACKAGE + ".RUN_COMMAND_PATH";
-    private static final String EXTRA_STDIN = PACKAGE + ".RUN_COMMAND_STDIN";
+    private static final String EXTRA_ARGUMENTS = PACKAGE + ".RUN_COMMAND_ARGUMENTS";
     private static final String EXTRA_WORKDIR = PACKAGE + ".RUN_COMMAND_WORKDIR";
     private static final String EXTRA_BACKGROUND = PACKAGE + ".RUN_COMMAND_BACKGROUND";
     private static final String EXTRA_PENDING_INTENT = PACKAGE + ".RUN_COMMAND_PENDING_INTENT";
@@ -111,25 +113,30 @@ final class TermuxRunner {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) flags |= PendingIntent.FLAG_MUTABLE;
             PendingIntent pi = PendingIntent.getBroadcast(app, token.hashCode(), callback, flags);
 
-            Intent run = new Intent();
+            Intent run = new Intent(ACTION);
             run.setClassName(PACKAGE, SERVICE);
-            run.setAction(ACTION);
             run.putExtra(EXTRA_COMMAND_PATH, SH);
-            run.putExtra(EXTRA_STDIN, command);
+            // Prefer -c so a non-empty command always runs even if stdin wiring differs.
+            run.putExtra(EXTRA_ARGUMENTS, new String[]{"-c", command});
             run.putExtra(EXTRA_BACKGROUND, true);
             if (workdir != null && !workdir.isEmpty()) run.putExtra(EXTRA_WORKDIR, workdir);
             run.putExtra(EXTRA_PENDING_INTENT, pi);
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                app.startForegroundService(run);
-            } else {
-                app.startService(run);
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    app.startForegroundService(run);
+                } else {
+                    app.startService(run);
+                }
+            } catch (Exception e) {
+                return new Result(-1, "", "", "Could not start InVxTermux RunCommandService ("
+                        + PACKAGE + "/" + SERVICE + "): " + e.getMessage());
             }
 
             if (!done.await(Math.max(1, timeoutSec), TimeUnit.SECONDS)) {
-                return new Result(-1, "", "", "Timed out after " + timeoutSec + " s waiting for Termux. "
-                        + "If Termux showed a notification about external apps, set allow-external-apps=true in "
-                        + "~/.termux/termux.properties and retry.");
+                return new Result(-1, "", "", "Timed out after " + timeoutSec
+                        + " s waiting for InVxTermux. Check that allow-external-apps=true is in "
+                        + "~/.termux/termux.properties and that you ran termux-reload-settings (or force-stopped Termux).");
             }
             Result r = out.get();
             if (r == null) {

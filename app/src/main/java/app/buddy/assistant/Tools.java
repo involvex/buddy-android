@@ -716,10 +716,14 @@ final class Tools {
             return "The Termux command couldn't be run: " + e.getMessage() + ".";
         }
         if (!r.error.isEmpty() && r.stdout.isEmpty() && r.stderr.isEmpty()) {
-            return "Termux error: " + r.error
-                    + (r.error.toLowerCase(java.util.Locale.US).contains("external")
-                    ? " Set allow-external-apps=true in ~/.termux/termux.properties inside Termux."
-                    : "");
+            String hint = "";
+            String low = r.error.toLowerCase(java.util.Locale.US);
+            if (low.contains("allow-external-apps") || low.contains("external apps")) {
+                hint = " Set allow-external-apps=true in ~/.termux/termux.properties, then run termux-reload-settings.";
+            } else if (low.contains("timed out") || low.contains("could not start")) {
+                hint = " Buddy could not reach InVxTermux's RunCommandService; this is usually a Buddy packaging bug, not a missing Termux setting.";
+            }
+            return "Termux error: " + r.error + hint;
         }
         String combined = r.stdout;
         if (!r.stderr.trim().isEmpty()) combined = (combined.isEmpty() ? "" : combined + "\n") + r.stderr;
