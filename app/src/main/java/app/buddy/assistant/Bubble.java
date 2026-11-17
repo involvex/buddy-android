@@ -537,6 +537,21 @@ final class Bubble implements ChatHub.Listener {
         clp.bottomMargin = dp(8);
         panel.addView(confirmCard, clp);
 
+        // one-tap follow-ups above the composer when the chat is idle
+        android.widget.HorizontalScrollView suggestScroll = new android.widget.HorizontalScrollView(svc);
+        suggestScroll.setHorizontalScrollBarEnabled(false);
+        suggestScroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        suggestRow = new LinearLayout(svc);
+        suggestRow.setOrientation(LinearLayout.HORIZONTAL);
+        suggestRow.setGravity(Gravity.CENTER_VERTICAL);
+        suggestScroll.addView(suggestRow);
+        suggestScroll.setVisibility(View.GONE);
+        LinearLayout.LayoutParams sugLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        sugLp.bottomMargin = dp(6);
+        panel.addView(suggestScroll, sugLp);
+        this.suggestScroll = suggestScroll;
+
         // composer: one pill with the text field, a mic and a round send button (like the chat screen)
         // the message box, as on the chat screen: the text on top, and under it a bar with attach, the model chip, paste,
         // live voice, the mic and send
@@ -627,6 +642,7 @@ final class Bubble implements ChatHub.Listener {
             @Override
             public void afterTextChanged(android.text.Editable e) {
                 paintSend.run();
+                refreshSuggestions();
             }
         });
         box.addView(inputRow, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
@@ -681,10 +697,66 @@ final class Bubble implements ChatHub.Listener {
     }
 
     private LinearLayout composer;
+    private LinearLayout suggestRow;
+    private android.widget.HorizontalScrollView suggestScroll;
     private VoiceBar voiceBar;
     /** Live voice: the button in the composer, and the bar in its place during a call in the chat on screen. */
     private ImageButton live;
     private VoiceBar liveBar;
+
+    /** Idle follow-up chips above the composer; hidden while typing, running, or answering a card. */
+    private void refreshSuggestions() {
+        if (suggestScroll == null || suggestRow == null) return;
+        boolean show = expanded && !showingList && !picking && !pickingModel
+                && pendingConfirm == null && !changing
+                && voiceBar != null && voiceBar.getVisibility() != View.VISIBLE
+                && (liveBar == null || liveBar.getVisibility() != View.VISIBLE)
+                && sessions.current != null && !sessions.current.running
+                && input != null && input.getText().toString().trim().isEmpty();
+        if (!show) {
+            if (suggestScroll.getVisibility() != View.GONE) {
+                suggestScroll.setVisibility(View.GONE);
+                suggestRow.removeAllViews();
+            }
+            return;
+        }
+        java.util.List<QuickActions.Action> acts = QuickActions.forBubble(svc, sessions.current, svc.foregroundAppName());
+        if (acts.isEmpty()) {
+            suggestScroll.setVisibility(View.GONE);
+            suggestRow.removeAllViews();
+            return;
+        }
+        suggestRow.removeAllViews();
+        for (int i = 0; i < acts.size(); i++) {
+            QuickActions.Action a = acts.get(i);
+            TextView chip = Ui.text(svc, a.label, 12, Ui.ACCENT_TEXT);
+            chip.setTypeface(Ui.sans(svc, 600));
+            chip.setSingleLine(true);
+            chip.setEllipsize(TextUtils.TruncateAt.END);
+            chip.setPaddingRelative(dp(12), dp(8), dp(12), dp(8));
+            chip.setBackground(Ui.outlined(svc, Ui.ACCENT_SOFT, 16, Theme.withAlpha(Ui.ACCENT, 0x66), 1));
+            chip.setOnClickListener(v -> sendQuick(a.prompt));
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            if (i > 0) lp.setMarginStart(dp(6));
+            suggestRow.addView(chip, lp);
+        }
+        suggestScroll.setVisibility(View.VISIBLE);
+    }
+
+    /** One-tap chip: send the prompt like the send button (collapses after). */
+    private void sendQuick(String prompt) {
+        if (prompt == null || prompt.trim().isEmpty()) return;
+        if (pendingConfirm != null || sessions.current == null || sessions.current.running) return;
+        String err = hub.send(sessions.current, prompt.trim());
+        if (err != null) {
+            toast(err);
+            return;
+        }
+        input.setText("");
+        refreshSuggestions();
+        collapse();
+    }
 
     /** The live button for Codex chats, and the live bar instead of the composer while this chat has the call. */
     private void paintLive() {
@@ -1025,6 +1097,7 @@ final class Bubble implements ChatHub.Listener {
         scrollToEnd();
         root.post(this::registerBack);
         updateViewing();
+        refreshSuggestions();
         if (keyboard) {
             input.requestFocus();
             input.postDelayed(() -> {
@@ -1816,6 +1889,7 @@ final class Bubble implements ChatHub.Listener {
             composer.setVisibility(showingList ? View.GONE : View.VISIBLE);
         }
         paintLive();
+        refreshSuggestions();
     }
 
     /** "+": pick the agent for a new chat, as in the app's New chat sheet. */
@@ -2116,6 +2190,7 @@ final class Bubble implements ChatHub.Listener {
         input.setHint(svc.getString(R.string.bubble_input_hint, ses.brainName()));
         updateViewing();
         refreshStatus();
+        refreshSuggestions();
         scrollToEnd();
     }
 
@@ -2180,6 +2255,7 @@ final class Bubble implements ChatHub.Listener {
         }
         paintLive();
         refreshStatus();
+        refreshSuggestions();
         if (showingList) renderSessionList();
         else if (expanded && renderedFor != null) restoreUnsent(renderedFor);
     }
@@ -2791,6 +2867,7 @@ final class Bubble implements ChatHub.Listener {
         updateThumb();
         setWorking(!paused && (running || controlling || browsing));
         updateHeader();
+        refreshSuggestions();
         if (!expanded) {
             try {
                 wm.updateViewLayout(root, lp);
