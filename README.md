@@ -144,6 +144,8 @@ git submodule update --init
 
 (`build.ps1` drives Git Bash with your Windows NDK. WSL works only with a Linux host NDK under `~/Android/Sdk/ndk`.)
 
+Gradle packs `linux/` and the third-party licence texts into the APK via `prepareBuddyAssets` (needed on Windows, where `app/src/main/assets/linux` is often a broken git symlink and installs then fail with `linux/buddy-run`).
+
 Elsewhere: `ANDROID_NDK_HOME=… native/build.sh`, then Gradle as usual. `build.sh` (on-phone) needs `pkg install openjdk-17 aapt2 d8 apksigner python clang make` and android.jar from platform-36 at `~/android-sdk/android-36/android.jar`. It creates a signing key at `~/.buddy-keys/release.jks` on first run: back it up, since updates must be signed with the same key. Gradle release signing reads `BUDDY_KEYSTORE` and `BUDDY_KEYSTORE_PASSWORD` (optionally `BUDDY_KEY_ALIAS`, `BUDDY_KEY_PASSWORD`). The version lives in `BuildInfo.java`, and the project layout is in [CONTRIBUTING.md](CONTRIBUTING.md#project-layout).
 
 ## License

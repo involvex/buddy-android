@@ -14,14 +14,42 @@ tasks.matching { it.name.startsWith("assemble") || it.name.startsWith("install")
         if (!jniProot.isFile) {
             throw GradleException(
                 "Missing ${jniProot.path}. Build natives first: on Windows run .\\native\\build.ps1 " +
-                    "(WSL2 + NDK); elsewhere run ANDROID_NDK_HOME=… native/build.sh. " +
+                    "(Git Bash + NDK); elsewhere run ANDROID_NDK_HOME=… native/build.sh. " +
                     "Also: git submodule update --init"
             )
         }
     }
 }
 
+// assets/linux and assets/third_party are git symlinks. On Windows (core.symlinks=false) they become
+// 17-byte text files, so the APK ships no buddy-run and every agent install fails with "linux/buddy-run".
+// Always pack the real trees into a generated assets dir and skip those placeholders.
+val packedAssets = layout.buildDirectory.dir("packedAssets")
+val prepareBuddyAssets = tasks.register<Sync>("prepareBuddyAssets") {
+    into(packedAssets)
+    from("src/main/assets") {
+        exclude("linux")
+        exclude("third_party")
+    }
+    from(rootProject.file("linux")) {
+        into("linux")
+        exclude("test/**")
+    }
+    from(rootProject.file("third_party")) {
+        into("third_party")
+        include("README.md", "*-LICENSE.txt")
+    }
+    doLast {
+        val buddyRun = packedAssets.get().file("linux/buddy-run").asFile
+        if (!buddyRun.isFile) {
+            throw GradleException("prepareBuddyAssets did not produce linux/buddy-run from ${rootProject.file("linux")}")
+        }
+    }
+}
+tasks.named("preBuild").configure { dependsOn(prepareBuddyAssets) }
+
 android {
+    sourceSets.getByName("main").assets.setSrcDirs(listOf(packedAssets))
     // proot for the built-in Linux ships as native libraries and must be extracted to disk to run
     packaging {
         jniLibs {

@@ -181,6 +181,10 @@ final class Helper {
                 byte[] buf = new byte[8192];
                 int n;
                 while ((n = in.read(buf)) > 0) o.write(buf, 0, n);
+            } catch (IOException e) {
+                // Windows builds often miss these when assets/linux is a broken git symlink placeholder.
+                throw new IOException("Missing APK asset " + f[0]
+                        + " (rebuild with Gradle so prepareBuddyAssets packs linux/ into the APK)", e);
             }
             try {
                 Os.chmod(out.getPath(), Integer.parseInt(f[2], 8));

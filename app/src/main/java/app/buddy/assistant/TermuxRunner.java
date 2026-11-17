@@ -9,8 +9,6 @@ import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
 
-import androidx.core.content.ContextCompat;
-
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -65,7 +63,7 @@ final class TermuxRunner {
     }
 
     static boolean hasPermission(Context c) {
-        return ContextCompat.checkSelfPermission(c, PERMISSION) == PackageManager.PERMISSION_GRANTED;
+        return c.checkSelfPermission(PERMISSION) == PackageManager.PERMISSION_GRANTED;
     }
 
     /**
