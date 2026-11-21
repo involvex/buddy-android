@@ -150,19 +150,20 @@ public class SetupActivity extends Screen implements Account.Listener, RemoteSes
         if (code != REQ_FACE || result != RESULT_OK || data == null || data.getData() == null) return;
         Uri uri = data.getData();
         new Thread(() -> {
-            boolean ok;
+            boolean ok, big = false;
             try {
-                Face.save(this, uri);
+                big = Face.save(this, uri);
                 ok = true;
             } catch (Exception e) {
                 ok = false;
             }
-            final boolean saved = ok;
+            final boolean saved = ok, tooBig = big;
             runOnUiThread(() -> {
                 if (!saved) {
                     Toast.makeText(this, R.string.setup_face_unreadable, Toast.LENGTH_LONG).show();
                     return;
                 }
+                if (tooBig) Toast.makeText(this, R.string.setup_face_too_big, Toast.LENGTH_LONG).show();
                 Prefs.setFace(this, "picture");
                 faceChanged();
             });
@@ -326,7 +327,7 @@ public class SetupActivity extends Screen implements Account.Listener, RemoteSes
         java.util.List<String> keyAgents = new java.util.ArrayList<>();
         if (misfit != null) {
             java.util.List<String> keys = new java.util.ArrayList<>(), fit = new java.util.ArrayList<>();
-            for (Providers.P k : Providers.all()) keys.add(k.name);
+            for (Providers.P k : Providers.all()) if (!OnPhone.ID.equals(k.id)) keys.add(k.name);
             for (Account a : Account.ALL) {
                 if (!Providers.forAgent(a.agent).isEmpty()) {
                     keyAgents.add(a.agent);
@@ -374,7 +375,7 @@ public class SetupActivity extends Screen implements Account.Listener, RemoteSes
         boolean offerOther = !installed && misfit != null && !keyAgents.isEmpty() && acc.step != Account.Step.INSTALLING;
         if (offerOther) {
             java.util.List<String> keys = new java.util.ArrayList<>(), fit = new java.util.ArrayList<>();
-            for (Providers.P k : Providers.all()) keys.add(k.name);
+            for (Providers.P k : Providers.all()) if (!OnPhone.ID.equals(k.id)) keys.add(k.name);
             for (String a : keyAgents) fit.add(Account.nameOf(a));
             installText += "\n\n" + getString(R.string.setup_step_signin_key_mismatch, acc.name(),
                     android.text.TextUtils.join(", ", keys), android.text.TextUtils.join(", ", fit));
@@ -448,12 +449,23 @@ public class SetupActivity extends Screen implements Account.Listener, RemoteSes
             }
         }), fp);
         ap.addView(fr, topGap(10));
-        ap.addView(text(this, getString(R.string.setup_face_note), 13, MUTED), topGap(8));
+        ap.addView(text(this, getString(R.string.setup_face_note) + " " + getString(R.string.setup_face_gif), 13, MUTED),
+                topGap(8));
         if (own) {
             TextView change = text(this, getString(R.string.setup_face_change), 14, ACCENT_TEXT);
             change.setPaddingRelative(0, dp(this, 4), 0, dp(this, 4));
             change.setOnClickListener(v -> pickFace());
             ap.addView(change, topGap(6));
+        }
+        if (own && Face.animated(this)) { // how an animated picture plays on the bubble (issue #68)
+            ap.addView(fieldLabel(getString(R.string.setup_face_anim), null), topGap(14));
+            ap.addView(segmented(this, new String[][]{{"loop", getString(R.string.setup_face_anim_loop)},
+                    {"once", getString(R.string.setup_face_anim_once)}, {"off", getString(R.string.setup_face_anim_off)}},
+                    Prefs.faceAnim(this), false, v -> {
+                        Prefs.setFaceAnim(this, v);
+                        faceChanged();
+                    }), topGap(8));
+            ap.addView(text(this, getString(R.string.setup_face_anim_note), 13, MUTED), topGap(8));
         }
         addCard(ap);
 
@@ -481,6 +493,7 @@ public class SetupActivity extends Screen implements Account.Listener, RemoteSes
                 }), topGap(12));
         for (Account a : Account.ALL) ag.addView(agentRow(a.agent), topGap(a == Account.CLAUDE ? 12 : 4));
         ag.addView(apiKeysRow(), topGap(4));
+        ag.addView(onPhoneRow(), topGap(4));
         // what a chat on Default uses, per agent (issue #20; API keys has the same rows for its services)
         List<String> defaults = new ArrayList<>();
         for (Account one : Account.ALL) {
@@ -561,8 +574,80 @@ public class SetupActivity extends Screen implements Account.Listener, RemoteSes
         LinearLayout.LayoutParams cpp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(this, 44));
         cpp.topMargin = dp(this, 12);
         mcp.addView(copy, cpp);
+        // those sessions on a hidden screen of their own, as a chat in background mode (issue #48)
+        mcp.addView(protect(switchRow(this, getString(R.string.setup_outside_background),
+                getString(R.string.setup_outside_background_info), Prefs.outsideBackground(this),
+                on -> Prefs.setOutsideBackground(this, on))), topGap(12));
         addCard(mcp);
+        tailnetCard();
 
+    }
+
+    /**
+     * Phone tools on Tailscale (see Tailnet): a switch, the phone's Tailscale address, and the computers paired for
+     * it, each with the command that gives Claude Code there the phone tools, and Remove.
+     */
+    private void tailnetCard() {
+        LinearLayout tn = card();
+        tn.setPaddingRelative(dp(this, 16), dp(this, 6), dp(this, 16), dp(this, 16));
+        boolean on = Prefs.tailnetTools(this);
+        tn.addView(protect(switchRow(this, getString(R.string.setup_tailnet), getString(R.string.setup_tailnet_info), on,
+                v -> {
+                    Prefs.setTailnetTools(this, v);
+                    render();
+                })));
+        if (on) {
+            java.net.InetAddress at = Tailnet.address(this);
+            tn.addView(text(this, at == null ? getString(R.string.setup_tailnet_no_address)
+                    : getString(R.string.setup_tailnet_address, at.getHostAddress()), 13, at == null ? ERR : MUTED), topGap(8));
+            // pairing starts on the computer: this command asks the phone, the user approves it on a card here, and the
+            // key goes straight into Claude Code's settings there (it never shows, nor goes through the clipboard)
+            if (at != null) {
+                tn.addView(text(this, getString(R.string.setup_tailnet_pair_info), 14, MUTED), topGap(10));
+                // paired again (a new key replaces the computer's old one, see Tailnet.add), the old entry goes first
+                String url = "http://" + at.getHostAddress() + ":" + McpServer.PORT + "/pair?name=";
+                String unix = "c=\"$(curl -sf -X POST \"" + url + "$(hostname)\")\" && { claude mcp remove -s user phone "
+                        + ">/dev/null 2>&1; claude mcp add-json -s user phone \"$c\"; } || echo \"Not paired\"";
+                // Windows PowerShell has no && or $( ), its curl is another tool, and it drops the quotes inside JSON
+                // handed to a program: the answer is read as an object, and Claude Code gets the key as a header
+                String windows = "$r = $null; $r = Invoke-RestMethod -Method Post \"" + url + "$env:COMPUTERNAME\"; "
+                        + "if ($r) { claude mcp remove -s user phone 2>$null; claude mcp add -s user --transport http phone "
+                        + "$r.url --header (\"Authorization: \" + $r.headers.Authorization) }";
+                // any other MCP app: the npm bridge, which pairs the same way on its first tool call (mcp-bridge/README.md)
+                String other = "npx -y buddy-phone-bridge\nBUDDY_URL=http://" + at.getHostAddress() + ":" + McpServer.PORT;
+                for (String[] k : new String[][]{{"Claude Code · Mac · Linux · WSL", unix}, {"Claude Code · Windows PowerShell", windows},
+                        {"Other MCP apps (Node.js 18+): command and environment", other}}) {
+                    final String cmd = k[1];
+                    tn.addView(sectionLabel(this, k[0]), topGap(12));
+                    tn.addView(codeBlock(this, cmd), topGap(6));
+                    Button copy = button(this, getString(R.string.setup_copy_command), false);
+                    copy.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ms_content_copy, 0, 0, 0);
+                    copy.setCompoundDrawableTintList(android.content.res.ColorStateList.valueOf(TEXT));
+                    copy.setCompoundDrawablePadding(dp(this, 8));
+                    copy.setOnClickListener(v -> {
+                        getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Buddy pairing", cmd));
+                        Toast.makeText(this, R.string.setup_command_copied, Toast.LENGTH_SHORT).show();
+                    });
+                    LinearLayout.LayoutParams cpp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(this, 44));
+                    cpp.topMargin = dp(this, 8);
+                    tn.addView(copy, cpp);
+                }
+            }
+            for (Tailnet.Device d : Tailnet.devices(this)) {
+                LinearLayout r = row(this);
+                r.setGravity(Gravity.CENTER_VERTICAL);
+                r.addView(text(this, d.name, 15, TEXT), weight1());
+                Button rm = button(this, getString(R.string.schedule_remove), false);
+                rm.setTextColor(ERR);
+                rm.setOnClickListener(v -> {
+                    Tailnet.remove(this, d.id);
+                    render();
+                });
+                r.addView(rm, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(this, 40)));
+                tn.addView(r, topGap(10));
+            }
+        }
+        addCard(tn);
     }
 
     /** Voice: how Buddy listens and speaks, its languages, the assistant gesture, live voice. */
@@ -584,6 +669,24 @@ public class SetupActivity extends Screen implements Account.Listener, RemoteSes
         String engineNote = getString("claude".equals(engine) ? R.string.setup_voice_input_claude
                 : "chatgpt".equals(engine) ? R.string.setup_voice_input_chatgpt : R.string.setup_voice_input_phone);
         vc.addView(text(this, engineNote, 13, MUTED), topGap(8));
+        // when listening ends: the engine waits for quiet, which noise around never gives (#60)
+        vc.addView(fieldLabel(getString(R.string.setup_voice_pause), null), topGap(16));
+        vc.addView(segmented(this, new String[][]{{"0", getString(R.string.setup_voice_auto)},
+                        {"1000", getString(R.string.rules_seconds, 1)}, {"2000", getString(R.string.rules_seconds, 2)},
+                        {"3000", getString(R.string.rules_seconds, 3)}},
+                String.valueOf(Prefs.voicePauseMs(this)), false, v -> {
+                    Prefs.setVoicePauseMs(this, Long.parseLong(v));
+                    render();
+                }), topGap(8));
+        vc.addView(text(this, getString(R.string.setup_voice_pause_info), 13, MUTED), topGap(8));
+        vc.addView(fieldLabel(getString(R.string.setup_voice_max), null), topGap(16));
+        vc.addView(segmented(this, new String[][]{{"0", getString(R.string.setup_voice_no_limit)},
+                        {"60000", getString(R.string.rules_minutes, 1)}, {"120000", getString(R.string.rules_minutes, 2)},
+                        {"300000", getString(R.string.rules_minutes, 5)}},
+                String.valueOf(Prefs.voiceMaxMs(this)), false, v -> {
+                    Prefs.setVoiceMaxMs(this, Long.parseLong(v));
+                    render();
+                }), topGap(8));
         vc.addView(fieldLabel(getString(R.string.setup_voice_output), null), topGap(16));
         String speech = Prefs.speechEngine(this);
         vc.addView(segmented(this, new String[][]{{"phone", getString(R.string.setup_voice_phone)}, {"chatgpt", "ChatGPT"}},
@@ -897,6 +1000,16 @@ public class SetupActivity extends Screen implements Account.Listener, RemoteSes
             r.setEnabled(speak);
             r.setClickable(speak);
         }
+        // while Buddy listens: on its own, whether replies are read aloud or not (#56)
+        ex.addView(switchRow(this, getString(R.string.setup_pause_listening), getString(R.string.setup_pause_listening_info),
+                Prefs.pauseMediaForListening(this), on -> {
+                    Prefs.setPauseMediaForListening(this, on);
+                    if (on && !NotificationWatcher.enabled(this)) { // that is how Buddy sees what plays
+                        Toast.makeText(this, R.string.rules_access_off_title, Toast.LENGTH_LONG).show();
+                        startActivity(new Intent(this, CheckActivity.class));
+                    }
+                }), full());
+        ex.addView(divider(), lineParams());
         ex.addView(switchRow(this, getString(R.string.setup_read_aloud), getString(R.string.setup_read_aloud_info),
                 speak, on -> {
                     Prefs.setSpeakReplies(this, on);
@@ -981,6 +1094,10 @@ public class SetupActivity extends Screen implements Account.Listener, RemoteSes
     /** MCP servers and skills: what agents get on top of the phone tools. */
     private void connectionsSection() {
         LinearLayout ex = card();
+        View tl = toolsRow();
+        tl.setPaddingRelative(dp(this, 16), dp(this, 10), dp(this, 16), dp(this, 10));
+        ex.addView(tl, full());
+        ex.addView(divider(), lineParams());
         View ms = mcpRow();
         ms.setPaddingRelative(dp(this, 16), dp(this, 10), dp(this, 16), dp(this, 10));
         ex.addView(ms, full());
@@ -1699,10 +1816,32 @@ public class SetupActivity extends Screen implements Account.Listener, RemoteSes
     /** Settings → API keys: other services' models for Claude Code, Codex and OpenCode. */
     private View apiKeysRow() {
         List<String> names = new ArrayList<>();
-        for (Providers.P p : Providers.all()) names.add(p.name);
+        for (Providers.P p : Providers.all()) if (!OnPhone.ID.equals(p.id)) names.add(p.name);
         return navRow(R.drawable.ms_key, getString(R.string.api_keys_title), names.isEmpty()
                 ? getString(R.string.api_keys_row_none) : android.text.TextUtils.join(", ", names), !names.isEmpty(),
                 ApiKeysActivity.class);
+    }
+
+    /** Settings → Models on this phone: a model Buddy runs itself, offline (see OnPhone). */
+    private View onPhoneRow() {
+        List<String> names = new ArrayList<>();
+        for (OnPhone.Model m : OnPhone.downloaded(this)) names.add(m.name);
+        return navRow(R.drawable.ms_memory, getString(R.string.onphone_title), names.isEmpty()
+                ? getString(R.string.onphone_row_none) : android.text.TextUtils.join(", ", names), !names.isEmpty(),
+                OnPhoneActivity.class);
+    }
+
+    /** Settings → Tools: every phone tool, each with a switch (ToolsActivity). */
+    private View toolsRow() {
+        int on = 0, all = 0;
+        for (String[] g : ToolSwitch.GROUPS) {
+            for (int i = 1; i < g.length; i++) {
+                all++;
+                if (ToolSwitch.on(this, g[i])) on++;
+            }
+        }
+        return navRow(R.drawable.ms_tune, getString(R.string.tools_title), getString(R.string.tools_row, on, all),
+                on == all, ToolsActivity.class);
     }
 
     /** Settings → Skills: instructions the agents share. */

@@ -58,6 +58,11 @@ public class BuddyService extends AccessibilityService implements McpServer.Hand
     private AutoPause autoPause;
     private final KeepAwake keepAwake = new KeepAwake(this);
     private final WorkNotice workNotice = new WorkNotice(this);
+
+    /** An outside session started or stopped working on the phone (main thread): the notification follows. */
+    void outsideChanged() {
+        workNotice.update();
+    }
     private Marks marks;
     /** Touches on the screen while a card waited for the user (see onScreenTouched). */
     private volatile int cardTouches;
@@ -92,6 +97,8 @@ public class BuddyService extends AccessibilityService implements McpServer.Hand
         new Thread(() -> { // API key services: the key saved per agent by earlier builds, then fresh model lists
             Providers.migrate(this);
             Providers.rewrite(this); // fields added by this build, before any run reads them
+            OnPhone.sync(this); // models on this phone as this build lists them (a context size changed)
+            OnPhone.killOrphans(); // an engine left by Buddy's earlier process holds GBs
             McpServers.rewrite(this);
             Providers.refresh(this);
         }, "providers").start();
@@ -143,12 +150,17 @@ public class BuddyService extends AccessibilityService implements McpServer.Hand
         public void onReceive(Context c, Intent i) {
             keepAwake.update(); // locked: the screen may sleep; unlocked: a long task keeps it on again
             if (bubble == null) return;
-            if (Intent.ACTION_USER_PRESENT.equals(i.getAction())) bubble.setLocked(false);
-            else if (Intent.ACTION_SCREEN_OFF.equals(i.getAction())) {
+            if (Intent.ACTION_USER_PRESENT.equals(i.getAction())) {
+                bubble.setLocked(false);
+                bubble.replayFace(); // an animated picture plays once each time the phone is unlocked (issue #68)
+            } else if (Intent.ACTION_SCREEN_OFF.equals(i.getAction())) {
                 bubble.setLocked(true);
                 bubble.noticeWaitingCard(); // a card that was on screen when it went dark: its notification now
+            } else {
+                boolean locked = getSystemService(KeyguardManager.class).isKeyguardLocked();
+                bubble.setLocked(locked);
+                if (!locked) bubble.replayFace(); // (a phone without a lock screen: on is unlocked)
             }
-            else bubble.setLocked(getSystemService(KeyguardManager.class).isKeyguardLocked());
         }
     };
 
@@ -494,7 +506,9 @@ public class BuddyService extends AccessibilityService implements McpServer.Hand
 
     @Override
     public JSONArray listTools() throws JSONException {
-        return tools.list();
+        Sessions.Session lite = Lite.caller(this); // a small model's chat: a dozen tools, more on request
+        JSONArray all = ToolSwitch.filter(this, tools.list()); // (the ones the user turned off aren't offered)
+        return lite != null ? Lite.filter(all, lite) : all;
     }
 
     @Override
@@ -684,7 +698,19 @@ public class BuddyService extends AccessibilityService implements McpServer.Hand
             return;
         }
         if (getPackageName().equals(foregroundPkg()) || onlyRuleRuns()) return;
+        // every agent at work has a hidden screen of its own (background mode): the user's touches aren't in its way
+        if (!anyOnRealScreen()) return;
         autoPause(R.string.service_autopaused_touch);
+    }
+
+    /** Is an agent working on the user's real screen: a chat without background mode, or a session from outside? */
+    private boolean anyOnRealScreen() {
+        if (Background.outsideOnRealScreenWithin(10 * 60_000)) return true; // (one may think for minutes between taps)
+        for (Sessions.Session s : ChatHub.get(this).sessions.all) {
+            if (!s.running || Triggers.ruleRun(s.id)) continue;
+            if (!Background.on(this, s.id)) return true;
+        }
+        return false;
     }
 
     /** Agents waiting for the user to confirm an install (wait_for_install, update_buddy): touches are theirs. */
@@ -787,7 +813,9 @@ public class BuddyService extends AccessibilityService implements McpServer.Hand
         if (revoked != null) return revoked;
         if (rereadNeeded && phone) {
             if ("read_screen".equals(tool) || "screenshot".equals(tool)) rereadNeeded = false;
-            else if (!"wait".equals(tool) && !"list_apps".equals(tool)) {
+            // only what acts on the screen by what was read there: a phone command, the notifications, the clipboard
+            // or opening an app don't depend on it, and go ahead (the flag stays for the next tap)
+            else if (ON_SCREEN.contains(tool)) {
                 return "SCREEN CHANGED: the user used the phone themselves (they paused you, or did something on the "
                         + "screen while you waited for their answer), so the screen may have changed and element ids are "
                         + "stale. Nothing was done. Call read_screen, then continue the task.";
@@ -795,6 +823,10 @@ public class BuddyService extends AccessibilityService implements McpServer.Hand
         }
         return null;
     }
+
+    /** Tools that act on what the agent last read on the screen (element ids, points), so a stale read misleads them. */
+    private static final java.util.Set<String> ON_SCREEN = new java.util.HashSet<>(java.util.Arrays.asList(
+            "tap", "long_press", "type_text", "scroll", "swipe", "press", "do_steps", "collect", "find"));
 
     /** Short vibration to get the user's attention (e.g. "tap Update"). */
     void nudge() {
@@ -984,7 +1016,10 @@ public class BuddyService extends AccessibilityService implements McpServer.Hand
                 onAnswer(true, null);
             }
         };
-        main.post(() -> bubble.askConfirm(text, chat, countdown, cb));
+        // from outside Buddy: the card says which computer asks, and Stop on that session denies it
+        final String key = Background.outsideCaller();
+        final String from = McpServer.CALLER_REMOTE.get();
+        main.post(() -> bubble.askConfirm(text, chat, countdown, cb, key, from));
         Triggers.approvalShown(this, chat, text, countdown, true, null);
         String ended = null;
         try {
@@ -1008,6 +1043,8 @@ public class BuddyService extends AccessibilityService implements McpServer.Hand
                     + "make these changes (for example, rewrite the text), then call confirm again with the "
                     + "updated version and wait for the answer.";
         }
+        String stopped = key == null || Boolean.TRUE.equals(answer.get()) ? null : Background.outsideStopped(key);
+        if (stopped != null) return stopped; // denied by the user's Stop on the whole session, not just this card
         return Boolean.TRUE.equals(answer.get())
                 ? "APPROVED by the user. Go ahead."
                 : "DENIED by the user. Do not do it; ask what they want instead.";
@@ -1036,7 +1073,9 @@ public class BuddyService extends AccessibilityService implements McpServer.Hand
             answer.set(text);
             done.countDown();
         };
-        main.post(() -> bubble.askQuestion(question, options, chat, handsOn, cb));
+        final String key = Background.outsideCaller();
+        final String from = McpServer.CALLER_REMOTE.get();
+        main.post(() -> bubble.askQuestion(question, options, chat, handsOn, cb, key, from));
         Triggers.approvalShown(this, chat, question, 0, false, handsOn ? null : options);
         boolean answered;
         try {
@@ -1056,6 +1095,8 @@ public class BuddyService extends AccessibilityService implements McpServer.Hand
                     + ". Don't guess; stop and ask in your reply.";
         }
         if (answer.get() == null) {
+            String stopped = key == null ? null : Background.outsideStopped(key);
+            if (stopped != null) return stopped; // the user's Stop on the whole session closed it
             return "NO ANSWER: the user closed the question. Don't guess; stop and ask what they want.";
         }
         String then = usedScreen ? " The user may have changed the screen meanwhile: call read_screen before going on." : "";

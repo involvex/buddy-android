@@ -187,6 +187,7 @@ final class CodexLive {
         Voice.stopListening();
         Voice.stopSpeaking();
         app = c.getApplicationContext();
+        SpeechPause.listen(app); // a live voice call listens the whole time: media stays paused until it ends (#56)
         logStartNew();
         log("start: chat " + s.id);
         ses = s;
@@ -480,7 +481,10 @@ final class CodexLive {
                     } else {
                         saying.append(d);
                     }
+                    // the voice's words are marked as in the chat: in the bar's one line they looked like the
+                    // user's own, as if the speech recognition had picked up the reply (issue #65)
                     String line = clean(user ? heard : saying);
+                    if (!user && !line.isEmpty()) line = VOICE_MARK + line;
                     for (Ui u : new ArrayList<>(uis)) u.onLine(line);
                     status();
                 });
@@ -500,6 +504,8 @@ final class CodexLive {
                     }
                     saying.setLength(0);
                     if (!text.isEmpty()) ChatHub.get(app).note(ses, Bubble.Kind.BUDDY, VOICE_MARK + text);
+                    // in the chat now: the bar's line goes, or it stayed under "Listening…" as if the user said it
+                    if (heard.length() == 0 || sent) for (Ui u : new ArrayList<>(uis)) u.onLine("");
                     status();
                 });
                 break;
