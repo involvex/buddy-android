@@ -11,8 +11,11 @@ fetch() { # url sha256 target
   # a partial download of another file (an older engine or model) isn't resumed: it would never match
   if [ -e "$3" ] && [ "$(cat "$3.sha" 2>/dev/null)" != "$2" ]; then rm -f "$3"; fi
   echo "$2" > "$3.sha"
+  # optional Hugging Face token (Buddy sets HF_TOKEN) for rate limits / gated repos
+  AUTH=()
+  [ -n "${HF_TOKEN:-}" ] && AUTH=(-H "Authorization: Bearer ${HF_TOKEN}")
   # (-sS: errors only, no progress numbers that a check for "416" could match)
-  curl -sSfL --retry 3 --retry-delay 2 -C - -o "$3" "$1" 2>"$D/tmp/curl.err" \
+  curl -sSfL --retry 3 --retry-delay 2 "${AUTH[@]}" -C - -o "$3" "$1" 2>"$D/tmp/curl.err" \
     || { [ -s "$3" ] && grep -q "error: 416" "$D/tmp/curl.err"; } \
     || { echo "Download failed: $(tail -c 300 "$D/tmp/curl.err")"; return 1; }
   if ! echo "$2  $3" | sha256sum -c - >/dev/null 2>&1; then

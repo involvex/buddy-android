@@ -2399,6 +2399,12 @@
     <string name="onphone_ran_on">Last time: the %s.</string>
     <string name="onphone_not_snapdragon">On this phone models run on the CPU: the NPU and GPU engine is for Snapdragon phones.</string>
     <string name="onphone_models">Models</string>
+    <string name="onphone_models_official">Official</string>
+    <string name="onphone_models_uncensored">Uncensored</string>
+    <string name="onphone_uncensored_warn">These models may answer adult topics with fewer refusals. Buddy still asks before Send, Pay, Delete and other phone actions.</string>
+    <string name="onphone_hf_token">Hugging Face token (optional)</string>
+    <string name="onphone_hf_token_info">For rate limits or gated downloads. Leave empty for public models. Kept encrypted on this phone; never in backups.</string>
+    <string name="onphone_hf_token_hint">hf_…</string>
     <string name="onphone_download">Download</string>
     <string name="onphone_delete">Remove</string>
     <string name="onphone_cancel">Cancel</string>
@@ -2418,6 +2424,8 @@
     <string name="onphone_note_gemma_e4b">By Google. Bigger and about half as fast as E2B. Needs plenty of free memory.</string>
     <string name="onphone_note_qwen_2b">By Alibaba. The smallest download, and the quickest to answer.</string>
     <string name="onphone_note_qwen_4b">By Alibaba. Bigger and about half as fast as the 2B.</string>
+    <string name="onphone_note_gemma_e2b_unc">Uncensored Gemma 4 E2B (HauhauCS Aggressive). May answer adult topics; still asks before phone actions. CPU on non-Snapdragon phones.</string>
+    <string name="onphone_note_gemma_e4b_unc">Uncensored Gemma 4 E4B (HauhauCS Aggressive). Larger; may answer adult topics; still asks before phone actions. Needs plenty of free memory.</string>
     <string name="hub_still_reading_phone">Still working… The model on this phone needs a moment, mostly for the first answer.</string>
     <string name="onphone_too_hot">The phone is too hot to run a model now. Let it cool down for a few minutes, then try again.</string>
     <string name="onphone_think">Think before answering</string>

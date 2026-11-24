@@ -48,9 +48,16 @@ final class OnPhone {
         final int context;
         /** Its strings: what it's good for (R.string). */
         final int note;
+        /** Abliterated / less-refusal weights (shown under Uncensored in Settings). */
+        final boolean uncensored;
 
         Model(String id, String name, String repo, String rev, String file, long size, String sha256, String license, int note,
               int context) {
+            this(id, name, repo, rev, file, size, sha256, license, note, context, false);
+        }
+
+        Model(String id, String name, String repo, String rev, String file, long size, String sha256, String license, int note,
+              int context, boolean uncensored) {
             this.id = id;
             this.context = context;
             this.name = name;
@@ -60,6 +67,7 @@ final class OnPhone {
             this.sha256 = sha256;
             this.license = license;
             this.note = note;
+            this.uncensored = uncensored;
         }
     }
 
@@ -80,7 +88,21 @@ final class OnPhone {
                     "e87f176479d0855a907a41277aca2f8ee7a09523", "Qwen3.5-4B-Q4_0.gguf", 2583221408L,
                     "298fcb5fe7a77ccc79745ae24751560c5ac56874caff4bb39b1f2055bd72b8bb", "Apache-2.0",
                     R.string.onphone_note_qwen_4b, 32768), // at 49152 its cache didn't map for the NPU
+            // HauhauCS Aggressive: abliterated Gemma 4 (text GGUF only; no mmproj). SHA = HF LFS oid.
+            new Model("gemma-4-e2b-unc-agg", "Gemma 4 E2B Uncensored", "HauhauCS/Gemma-4-E2B-Uncensored-HauhauCS-Aggressive",
+                    "da8593c3e407afcd3e7da94ff2d69d77e2a28a48",
+                    "Gemma-4-E2B-Uncensored-HauhauCS-Aggressive-Q4_K_P.gguf", 3450277824L,
+                    "aa866c1e514468f3d0f33971679d63c11b7c9c47acddd1cc5785fc467e52c21d", "gemma",
+                    R.string.onphone_note_gemma_e2b_unc, 32768, true),
+            new Model("gemma-4-e4b-unc-agg", "Gemma 4 E4B Uncensored", "HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive",
+                    "45b6a334b4bcd1d7f37179df58b3b1d66a184e5d",
+                    "Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf", 5335285728L,
+                    "d0027dd3a9128d9323e9f282c8bf010a8526c46477584535991dc1a869b56e96", "gemma",
+                    R.string.onphone_note_gemma_e4b_unc, 32768, true),
     };
+
+    /** Secret name for an optional Hugging Face token (downloads / rate limits). */
+    static final String HF_TOKEN = "hf_token";
 
     /** Where it runs: the user's pick ("auto" takes the first that starts, in this order). */
     static final String[] DEVICES = {"auto", "npu", "gpu", "cpu"};
@@ -178,7 +200,10 @@ final class OnPhone {
             cmd[0] = "/bin/bash";
             cmd[1] = "/root/bin/onphone-get";
             System.arraycopy(args, 0, cmd, 2, args.length);
-            Process p = Linux.builder(c, cmd).redirectErrorStream(true).start();
+            ProcessBuilder pb = Linux.builder(c, cmd).redirectErrorStream(true);
+            String hf = Secrets.get(c, HF_TOKEN);
+            if (hf != null && !hf.trim().isEmpty()) pb.environment().put("HF_TOKEN", hf.trim());
+            Process p = pb.start();
             p.getOutputStream().close();
             StringBuilder out = new StringBuilder();
             try (InputStream in = p.getInputStream()) {
@@ -191,6 +216,20 @@ final class OnPhone {
             return code == 0 && said.endsWith("OK") ? null : said.isEmpty() ? "exit " + code : said;
         } catch (Exception e) {
             return String.valueOf(e.getMessage());
+        }
+    }
+
+    static String hfToken(Context c) {
+        String t = Secrets.get(c, HF_TOKEN);
+        return t == null ? "" : t;
+    }
+
+    static void setHfToken(Context c, String token) {
+        try {
+            if (token == null || token.trim().isEmpty()) Secrets.remove(c, HF_TOKEN);
+            else Secrets.put(c, HF_TOKEN, token.trim());
+        } catch (Exception e) {
+            android.util.Log.w("Buddy", "hf token", e);
         }
     }
 

@@ -7,6 +7,7 @@ import android.text.format.Formatter;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
 import android.widget.LinearLayout;
@@ -26,6 +27,7 @@ public class OnPhoneActivity extends Screen {
     private static final Map<String, String> failed = new java.util.concurrent.ConcurrentHashMap<>();
 
     private LinearLayout body;
+    private EditText hfField;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Runnable tick = new Runnable() {
         @Override
@@ -73,10 +75,12 @@ public class OnPhoneActivity extends Screen {
     @Override
     protected void onPause() {
         super.onPause();
+        saveHfToken();
         main.removeCallbacks(tick);
     }
 
     private void build() {
+        String draftTok = hfField != null ? hfField.getText().toString() : OnPhone.hfToken(this);
         body.removeAllViews();
         body.addView(text(this, getString(R.string.onphone_intro), 13, MUTED), full());
 
@@ -106,12 +110,48 @@ public class OnPhoneActivity extends Screen {
         think.setPaddingRelative(dp(this, 4), dp(this, 16), dp(this, 4), 0);
         body.addView(think, full());
 
-        TextView ml = sectionLabel(this, getString(R.string.onphone_models));
+        TextView hfL = sectionLabel(this, getString(R.string.onphone_hf_token));
+        hfL.setPaddingRelative(0, dp(this, 20), 0, dp(this, 8));
+        body.addView(hfL);
+        TextView hfInfo = text(this, getString(R.string.onphone_hf_token_info), 12, MUTED);
+        hfInfo.setPaddingRelative(dp(this, 4), 0, dp(this, 4), 0);
+        body.addView(hfInfo, full());
+        hfField = new EditText(this);
+        hfField.setHint(getString(R.string.onphone_hf_token_hint));
+        hfField.setHintTextColor(MUTED);
+        hfField.setTextColor(TEXT);
+        hfField.setTypeface(mono(this, 400));
+        hfField.setTextSize(14);
+        hfField.setSingleLine(true);
+        hfField.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        hfField.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
+        hfField.setPaddingRelative(dp(this, 12), dp(this, 12), dp(this, 12), dp(this, 12));
+        hfField.setBackground(outlined(this, BG, 12, OUTLINE, 1));
+        if (!draftTok.isEmpty()) hfField.setText(draftTok);
+        hfField.setOnFocusChangeListener((v, has) -> {
+            if (!has) saveHfToken();
+        });
+        LinearLayout.LayoutParams hfp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        hfp.topMargin = dp(this, 8);
+        body.addView(hfField, hfp);
+
+        TextView ml = sectionLabel(this, getString(R.string.onphone_models_official));
         ml.setPaddingRelative(0, dp(this, 20), 0, dp(this, 8));
         body.addView(ml);
         LinearLayout g = group(this);
-        for (OnPhone.Model m : OnPhone.MODELS) addToGroup(this, g, modelRow(m), 20);
+        for (OnPhone.Model m : OnPhone.MODELS) if (!m.uncensored) addToGroup(this, g, modelRow(m), 20);
         body.addView(g, full());
+
+        TextView ul = sectionLabel(this, getString(R.string.onphone_models_uncensored));
+        ul.setPaddingRelative(0, dp(this, 20), 0, dp(this, 8));
+        body.addView(ul);
+        TextView uw = text(this, getString(R.string.onphone_uncensored_warn), 12, MUTED);
+        uw.setPaddingRelative(dp(this, 4), 0, dp(this, 4), dp(this, 8));
+        body.addView(uw, full());
+        LinearLayout ug = group(this);
+        for (OnPhone.Model m : OnPhone.MODELS) if (m.uncensored) addToGroup(this, ug, modelRow(m), 20);
+        body.addView(ug, full());
 
         TextView src = text(this, downloadNote(this, getString(R.string.onphone_source, OnPhone.ENGINE)), 12, MUTED);
         src.setPaddingRelative(dp(this, 4), dp(this, 16), dp(this, 4), 0);
@@ -209,11 +249,16 @@ public class OnPhoneActivity extends Screen {
         go(m);
     }
 
+    private void saveHfToken() {
+        if (hfField != null) OnPhone.setHfToken(this, hfField.getText().toString());
+    }
+
     private void go(OnPhone.Model m) {
         if (!Linux.installed(this)) {
             android.widget.Toast.makeText(this, R.string.helper_linux_missing, android.widget.Toast.LENGTH_LONG).show();
             return;
         }
+        saveHfToken();
         busy = m.id;
         failed.remove(m.id);
         OnPhone.cancelled = false;
