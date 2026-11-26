@@ -30,10 +30,35 @@ final class Sessions {
         final String text;
         /** Attachment ids (see Attachments); empty for most messages. */
         final List<String> files;
+        /** Files in the chat's Linux tools this message is about (their paths there): chips, like attachments. */
+        List<String> linux = new ArrayList<>();
         /** A user message Buddy sent on its own at a scheduled time (see Schedules): the chat marks it so. */
         boolean scheduled;
         /** A user message the user edited (issue #44): the chat marks it so. */
         boolean edited;
+        /** In a chat with a team (see Team): who a user's message went to, as names ("Leader, Builder"); "" elsewhere. */
+        String to = "";
+        /** A user's message in a team chat that went to the leader too (or to it alone). */
+        boolean toLeader = true;
+        /** What a team's member said: its id (""= the chat's own agent or the user), its name, agent and colour then. */
+        String from = "", fromName = "", fromOn = "";
+        int color;
+        /** The message this one answers, in a team chat: who wrote it ("" = the user) and its words (clipped). */
+        String quoteFrom = "", quote = "";
+        /** A member's answer to the user's own message (the leader wasn't in it, and hears of it with its next turn). */
+        boolean direct;
+        /** A member's answer the leader has had: from the team tool while it waited, or in its next turn's digest. */
+        boolean heard;
+        /** Not saved: Buddy's own line that started a turn of the leader (Team.carryOn): a turn begins here, as at a user's message. */
+        boolean turn;
+
+        /**
+         * Can be edited and asked again (issue #44): the user's own message, to the chat's agent alone (in a team chat, a
+         * message that went to members too, or only to them, would reach only the leader again).
+         */
+        boolean editable() {
+            return kind == Bubble.Kind.USER && (to.isEmpty() || toLeader && !to.contains(","));
+        }
 
         Msg(Bubble.Kind kind, String text) {
             this(kind, text, null);
@@ -52,9 +77,10 @@ final class Sessions {
 
         /** Text for places that can't show attachments (bubble panel). */
         String label() {
-            if (files.isEmpty()) return text;
-            String n = files.size() == 1 ? "📎 " + Attachments.name(files.get(0))
-                    : BuddyApp.plural(R.plurals.attach_count, files.size(), files.size());
+            if (files.isEmpty() && linux.isEmpty()) return text;
+            int count = files.size() + linux.size();
+            String one = !files.isEmpty() ? Attachments.name(files.get(0)) : linux.get(0).substring(linux.get(0).lastIndexOf('/') + 1);
+            String n = count == 1 ? "📎 " + one : BuddyApp.plural(R.plurals.attach_count, count, count);
             return text.isEmpty() ? n : kind == Bubble.Kind.BUDDY ? text + "\n" + n : n + "\n" + text;
         }
     }
@@ -99,6 +125,13 @@ final class Sessions {
         boolean dev;
         /** Long-task mode: the screen stays on while this chat works, and its end is a notification (see KeepAwake). */
         boolean awake;
+        /**
+         * The chat's project folder: where its agent starts and keeps the chat's work, a path inside the workspace
+         * ("flappy"; see FilePlaces.validProject). "" is the workspace itself, which chats without one share.
+         */
+        String folder = "";
+        /** Files sent to Linux tools (LinuxFiles) stay, in ~/.buddy/work/incoming, when the chat is deleted. */
+        boolean keepFiles = true;
         /** Background mode: the agent works on a display of its own, the user keeps the screen (see Background). */
         boolean background;
         /** Lite mode (see Lite): null = automatic (on for a model on this phone), else the user's pick. */
@@ -120,6 +153,49 @@ final class Sessions {
         String parent = "";
         /** A helper's place among its parent's (0, 1, 2), in the order they were started. */
         int slot;
+        /**
+         * A helper that works like its chat (delegate's "work"): with the chat's cards, in the chat's project folder; the
+         * others only look things up (see Helpers).
+         */
+        boolean works;
+        /** A helper's round: the slot of the first helper its delegate call started (the round's reports go together). */
+        int round;
+        /** A helper's turn: how many messages the user had sent in the parent chat when it started (a new one clears them). */
+        int turn;
+        /** The chat's team (see Team), or null: none. Replaced whole when it changes (main thread). */
+        volatile Team team;
+        /** The team the chat had last, kept when it is turned off: turning it on again starts from it. */
+        volatile Team lastTeam;
+        /** Not saved: a team the user asked for in the chat (team_start): the chat opens the setup with it. */
+        volatile Team.Draft teamDraft;
+        /** A team's member's chat: the member's id in its parent's team; "" for every other chat. */
+        String member = "";
+        /** In a team chat: how many of its messages the leader has had word of (see Team.digest). */
+        int teamAt;
+        /** How many messages the user has sent in this chat, ever (a helper's turn: see Helpers). */
+        int said;
+        /** A member's chat: its instructions as it last got them (a hash), to send them again when they change. */
+        int briefed;
+        /** A member's chat, not saved: who told it what it works on now ("" = the user), and the words. */
+        volatile String toldBy = "", told = "";
+        /** A team's chat, not saved: how often its leader carried on by itself since the user last wrote (Team.carryOn). */
+        int carriedOn;
+        /**
+         * A team's chat, not saved: its leader's scheduled turn ended while its team wasn't done, so that run's end
+         * wasn't told yet; the turn it carries on with is that scheduled run still (quiet: as it was), see Team.carryOn.
+         */
+        boolean carryScheduled, carryQuiet;
+        /** With carryScheduled: that turn was a quiet run's and said there was no news (no notification for its end). */
+        boolean carryQuietSaid;
+        /** A team's chat, not saved: until when its leader is about to carry on by itself (Team.carryOnSoon); 0: not. */
+        long carrySoonUntil;
+        /**
+         * Not saved, this run's team steps (see ChatHub.ownStep): the ones Buddy showed when the call came in and the
+         * agent hasn't reported yet, and the ones the agent reported whose call hasn't come in yet. A step shows once.
+         */
+        final List<String> stepsShown = new ArrayList<>(), stepsReported = new ArrayList<>();
+        /** A member's chat, not saved: where its run's messages start (the message it was told); -1: not known. */
+        volatile int toldAt = -1;
         /** The chat's scheduled task (see Schedules), or null. */
         Schedules.Plan schedule;
         /** Messages the agent scheduled for itself in this chat (schedule_message), soonest first. Main thread. */
@@ -132,6 +208,12 @@ final class Sessions {
         volatile long otherToolAt;
         /** When its agent last started a phone tool in this run (elapsedRealtime; not saved). */
         volatile long phoneToolAt;
+        /**
+         * The shell command its agent started last in this run, while that is its latest step (null otherwise), and
+         * when (elapsedRealtime): the chat's "what is it doing" sheet (issue #81). Not saved.
+         */
+        volatile String cmd;
+        volatile long cmdAt;
         String status = "";
         String lastReply = "";
         long lastEventAt;
@@ -234,7 +316,7 @@ final class Sessions {
 
     /**
      * A new chat that is a copy of src with its first count messages (issue #44): same agent, model, effort, Linux
-     * tools, background and incognito; nothing of its schedule, approvals choice, allowed apps, pin or archive.
+     * tools, project folder, background and incognito; nothing of its schedule, approvals choice, allowed apps, pin or archive.
      * Placed just after src in the list (a fork then moves to the top with its first note, as any chat with a new
      * message does). Its agent starts fresh with the chat so far (reseed).
      */
@@ -251,6 +333,23 @@ final class Sessions {
             o.remove("allowed");
             o.remove("later");
             o.remove("lite_groups"); // its agent starts fresh: it loads what it needs again
+            // nor a team: its members' memory stays with this chat (the copy's messages keep who said what)
+            o.remove("team");
+            o.remove("last_team");
+            o.remove("team_at");
+            o.remove("said");
+            o.remove("briefed");
+            // files sent to the first chat's Linux tools are in its own folder, which the fork can't reach (and which goes
+            // with that chat): their paths stay in the messages as text
+            for (int i = 0; i < kept.length(); i++) {
+                JSONObject m = kept.optJSONObject(i);
+                JSONArray lx = m == null ? null : m.optJSONArray("lx");
+                if (lx == null) continue;
+                StringBuilder t = new StringBuilder(m.optString("t"));
+                for (int k = 0; k < lx.length(); k++) t.append(t.length() > 0 ? "\n" : "").append(lx.optString(k));
+                m.put("t", t.toString());
+                m.remove("lx");
+            }
             Session s = fromJson(o, new boolean[1]);
             s.reseed = true;
             int at = all.indexOf(src);
@@ -310,6 +409,7 @@ final class Sessions {
         s.messages.add(new Msg(kind, text, files));
         while (s.messages.size() > MAX_MESSAGES) {
             s.messages.remove(0);
+            if (s.teamAt > 0) s.teamAt--; // (it counts messages from the start, which just lost one)
             s.cut = true; // the chat says so, and offers the agent's own record of the start where there is one
         }
         s.updated = System.currentTimeMillis();
@@ -417,15 +517,22 @@ final class Sessions {
         for (Msg m : s.messages) {
             JSONObject mo = new JSONObject().put("k", m.kind.name()).put("t", m.text);
             if (!m.files.isEmpty()) mo.put("f", new JSONArray(m.files));
+            if (!m.linux.isEmpty()) mo.put("lx", new JSONArray(m.linux));
             if (m.scheduled) mo.put("s", true);
             if (m.edited) mo.put("e", true);
+            if (!m.to.isEmpty()) mo.put("to", m.to).put("tl", m.toLeader);
+            if (!m.fromName.isEmpty()) mo.put("from", m.from).put("fn", m.fromName).put("fo", m.fromOn).put("col", m.color).put("dir", m.direct);
+            if (!m.quote.isEmpty()) mo.put("q", m.quote).put("qf", m.quoteFrom);
+            if (m.heard) mo.put("hd", true);
             msgs.put(mo);
         }
         JSONObject o = new JSONObject().put("id", s.id).put("backend", s.backend).put("title", s.title).put("model", s.model)
                 .put("effort", s.effort).put("actual_model", s.actualModel).put("ctx_used", s.ctxUsed).put("ctx_window", s.ctxWindow)
-                .put("interrupted", s.interrupted).put("incognito", s.incognito).put("dev", s.dev).put("awake", s.awake).put("background", s.background).put("approvals", s.approvals).put("handover", s.handover == null ? "" : s.handover).put("reseed", s.reseed)
+                .put("interrupted", s.interrupted).put("incognito", s.incognito).put("dev", s.dev).put("awake", s.awake).put("keep_files", s.keepFiles).put("folder", s.folder).put("background", s.background).put("approvals", s.approvals).put("handover", s.handover == null ? "" : s.handover).put("reseed", s.reseed)
                 .put("handover_model", s.handoverModel).put("handover_effort", s.handoverEffort)
-                .put("pinned", s.pinned).put("archived", s.archived).put("updated", s.updated).put("cut", s.cut).put("parent", s.parent).put("slot", s.slot).put("messages", msgs);
+                .put("pinned", s.pinned).put("archived", s.archived).put("updated", s.updated).put("cut", s.cut).put("parent", s.parent).put("slot", s.slot).put("works", s.works).put("round", s.round).put("turn", s.turn).put("member", s.member).put("team_at", s.teamAt).put("said", s.said).put("briefed", s.briefed).put("messages", msgs);
+        if (s.team != null) o.put("team", s.team.json());
+        if (s.lastTeam != null) o.put("last_team", s.lastTeam.json());
         synchronized (s.apps) {
             if (!s.apps.isEmpty()) o.put("apps", new JSONArray(s.apps));
         }
@@ -464,6 +571,8 @@ final class Sessions {
         older[0] |= !o.has("dev");
         s.dev = o.optBoolean("dev", Prefs.devMode(app));
         s.awake = o.optBoolean("awake");
+        s.keepFiles = o.optBoolean("keep_files", true);
+        s.folder = FilePlaces.validProject(o.optString("folder")) ? o.optString("folder") : "";
         s.background = o.optBoolean("background");
         if (o.has("lite")) s.lite = o.optBoolean("lite");
         JSONObject tl = o.optJSONObject("tools");
@@ -484,6 +593,19 @@ final class Sessions {
         s.archived = o.optBoolean("archived");
         s.parent = o.optString("parent");
         s.slot = o.optInt("slot");
+        s.works = o.optBoolean("works");
+        s.round = o.optInt("round");
+        s.turn = o.optInt("turn");
+        s.member = o.optString("member");
+        s.teamAt = o.optInt("team_at");
+        s.said = o.optInt("said");
+        s.briefed = o.optInt("briefed");
+        s.team = Team.of(o.optJSONObject("team"));
+        s.lastTeam = Team.of(o.optJSONObject("last_team"));
+        // (2.5.0: the team took over from sub-agents; this chat's own switch for them is the team's now)
+        Boolean wasDelegate = s.tools.remove("delegate");
+        s.tools.remove("subagents");
+        if (wasDelegate != null) for (String t : new String[]{"team", "team_change", "team_start"}) if (!s.tools.containsKey(t)) s.tools.put(t, wasDelegate);
         s.schedule = Schedules.Plan.of(o.optJSONObject("schedule"));
         JSONArray ok = s.schedule == null ? null : o.optJSONArray("allowed"); // kept for its scheduled runs
         if (ok != null) for (int j = 0; j < ok.length(); j++) s.allowed.add(ok.getString(j));
@@ -502,8 +624,20 @@ final class Sessions {
             JSONArray f = m.optJSONArray("f");
             if (f != null) for (int k = 0; k < f.length(); k++) files.add(f.getString(k));
             Msg msg = new Msg(Bubble.Kind.valueOf(m.getString("k")), m.getString("t"), files);
+            JSONArray lx = m.optJSONArray("lx");
+            if (lx != null) for (int k = 0; k < lx.length(); k++) msg.linux.add(lx.getString(k));
             msg.scheduled = m.optBoolean("s");
             msg.edited = m.optBoolean("e");
+            msg.to = m.optString("to");
+            msg.toLeader = m.optBoolean("tl", true);
+            msg.from = m.optString("from");
+            msg.fromName = m.optString("fn");
+            msg.fromOn = m.optString("fo");
+            msg.color = m.optInt("col");
+            msg.direct = m.optBoolean("dir");
+            msg.quote = m.optString("q");
+            msg.quoteFrom = m.optString("qf");
+            msg.heard = m.optBoolean("hd");
             s.messages.add(msg);
         }
         return s;

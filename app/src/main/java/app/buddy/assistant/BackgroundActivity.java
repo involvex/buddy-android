@@ -25,6 +25,14 @@ public class BackgroundActivity extends Screen {
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
+        // from the lock's "allow it on this Wi-Fi" notification: once more, so Android's question shows now
+        // Android asks about an access point only when the user switches it on in Settings (switched on by Buddy, it
+        // just goes off again, measured): Settings opens on the switch
+        // (once: not again when the screen is made anew, by its own recreate, a theme change or a rotation)
+        if (state == null && getIntent().getBooleanExtra("debug_lock_again", false)) {
+            getIntent().removeExtra("debug_lock_again");
+            openWirelessDebugging();
+        }
         LinearLayout root = column(this);
         root.setBackgroundColor(BG);
         LinearLayout top = row(this);
@@ -54,12 +62,14 @@ public class BackgroundActivity extends Screen {
     protected void onResume() {
         super.onResume();
         Background.listen(() -> runOnUiThread(this::render));
+        Background.onStartEnded(() -> runOnUiThread(this::render));
         render();
     }
 
     @Override
     protected void onPause() {
         super.onPause();
+        Background.onStartEnded(null);
         // the set-up goes on while the user is in Settings: it brings this screen back itself when it's done
         Background.listen(() -> {
             Background.Step s = Background.step();
@@ -71,6 +81,23 @@ public class BackgroundActivity extends Screen {
                                 | Intent.FLAG_ACTIVITY_SINGLE_TOP)));
             }
         });
+    }
+
+    /**
+     * Developer options, scrolled to the Wireless debugging switch where the phone's Settings knows how (Android's own
+     * does since Android 11), for the user to turn it on; this screen shows how it stands when they come back.
+     */
+    private void openWirelessDebugging() {
+        try {
+            Bundle row = new Bundle();
+            row.putString(":settings:fragment_args_key", "toggle_adb_wireless");
+            startActivity(new Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
+                    .putExtra(":settings:fragment_args_key", "toggle_adb_wireless")
+                    .putExtra(":settings:show_fragment_args", row));
+            android.widget.Toast.makeText(this, R.string.debug_lock_by_hand, android.widget.Toast.LENGTH_LONG).show();
+        } catch (Exception e) {
+            startActivity(new Intent(Settings.ACTION_SETTINGS));
+        }
     }
 
     private void openDeveloperOptions() {
@@ -125,7 +152,9 @@ public class BackgroundActivity extends Screen {
             }
         } else {
             if (s == Background.Step.FAILED) {
-                body.addView(text(this, getString(R.string.background_failed, Background.detail()), 14, ERR), gap(16));
+                TextView why = text(this, getString(R.string.background_failed, Background.detail()), 14, ERR);
+                why.setTextIsSelectable(true); // (to copy into a report)
+                body.addView(why, gap(16));
             }
             Button go = button(this, getString(R.string.background_setup), true);
             go.setOnClickListener(v -> {
@@ -160,6 +189,7 @@ public class BackgroundActivity extends Screen {
         final TextView status = title(this, getString(R.string.background_ready), 16);
         body.addView(status, gap(20));
         final TextView info = text(this, getString(R.string.background_ready_info), 13, MUTED);
+        info.setTextIsSelectable(true); // (what adb said, to copy into a report)
         body.addView(info, gap(4));
         final Button start = button(this, getString(R.string.background_start_now), true);
         start.setVisibility(View.GONE);
@@ -182,10 +212,20 @@ public class BackgroundActivity extends Screen {
             String problem = alive ? Background.problem(this) : null;
             // (not started again after a restart although that's switched on: why, where it would say it isn't running)
             String restart = alive || older || !Prefs.backgroundRestart(this) ? null : Background.restartNote();
+            String last = alive || older ? null : Background.lastStartWhy(); // (the last Start now, also from before this screen was drawn)
             runOnUiThread(() -> {
                 status.setText(alive ? R.string.background_ready : R.string.background_paired);
+                if (!alive && Background.startBusy()) { // (a Start now from before this screen was drawn: still at it)
+                    info.setText(R.string.background_starting);
+                    start.setVisibility(View.VISIBLE);
+                    start.setEnabled(false);
+                    return;
+                }
                 if (problem != null) info.setText(getString(R.string.background_failed, problem));
-                else if (restart != null) info.setText(getString(R.string.background_failed, restart));
+                else if (last != null) {
+                    info.setText(getString(R.string.background_failed, last));
+                    if (last.contains("paired")) pair.setVisibility(View.VISIBLE); // Wireless debugging forgot Buddy
+                } else if (restart != null) info.setText(getString(R.string.background_failed, restart));
                 else info.setText(alive ? R.string.background_ready_info
                         : older ? R.string.background_older : R.string.background_asleep);
                 start.setVisibility(alive ? View.GONE : View.VISIBLE);
@@ -226,6 +266,56 @@ public class BackgroundActivity extends Screen {
                 Prefs.backgroundRestart(this), on -> Background.setRestart(this, on));
         again.setPaddingRelative(dp(this, 4), dp(this, 12), dp(this, 4), dp(this, 12));
         body.addView(again, full());
+        // off right now: said here too, not only in a notification, with the way to turn it on
+        if (Background.setUp(this) && !DebugLock.on(this)) {
+            LinearLayout warn = column(this);
+            warn.setBackground(outlined(this, CARD, 16, ERR, 1));
+            warn.setPaddingRelative(dp(this, 14), dp(this, 12), dp(this, 14), dp(this, 12));
+            warn.addView(title(this, getString(R.string.debug_lock_off_title), 15));
+            TextView wt = text(this, getString(R.string.debug_lock_settings_text), 13, MUTED);
+            wt.setPaddingRelative(0, dp(this, 4), 0, dp(this, 10));
+            warn.addView(wt);
+            android.widget.Button on = button(this, getString(R.string.debug_lock_turn_on), true);
+            on.setOnClickListener(v -> {
+                v.setEnabled(false);
+                new Thread(() -> {
+                    // Buddy switches it on itself where the phone gave it the right, or through the helper while that
+                    // runs; else (the helper went with it) only the user can: Settings opens on the switch
+                    boolean can = Background.canSwitchWireless(this) || Background.alive(this);
+                    runOnUiThread(() -> {
+                        if (isFinishing()) return;
+                        v.setEnabled(true);
+                        if (can) {
+                            DebugLock.changed(BuddyService.get()); // one more try: Android's question comes up if it has one
+                            v.postDelayed(this::recreate, 6000); // (it tries after a moment, and the phone answers after another)
+                            return;
+                        }
+                        openWirelessDebugging();
+                    });
+                }, "debug-lock-on").start();
+            });
+            warn.addView(on, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(this, 40)));
+            LinearLayout.LayoutParams wp = full();
+            wp.topMargin = dp(this, 8);
+            wp.bottomMargin = dp(this, 8);
+            body.addView(protect(warn), wp);
+        }
+        // the phone switches Wireless debugging off now and then; without it the helper can't be started again
+        LinearLayout lock = switchRow(this, getString(R.string.debug_lock), getString(R.string.debug_lock_info),
+                Prefs.debugLock(this), on -> {
+                    Prefs.setDebugLock(this, on);
+                    DebugLock.changed(BuddyService.get());
+                });
+        lock.setPaddingRelative(dp(this, 4), dp(this, 12), dp(this, 4), dp(this, 12));
+        body.addView(lock, full());
+        // a video that plays by itself on a hidden screen would be heard through the speaker
+        LinearLayout mute = switchRow(this, getString(R.string.background_mute), getString(R.string.background_mute_info),
+                Prefs.muteHidden(this), on -> {
+                    Prefs.setMuteHidden(this, on);
+                    HiddenMute.check(this);
+                });
+        mute.setPaddingRelative(dp(this, 4), dp(this, 12), dp(this, 4), dp(this, 12));
+        body.addView(mute, full());
         // phone commands (issue #22): the agent's own command line on the phone, through the same helper
         TextView pc = sectionLabel(this, getString(R.string.background_shell));
         body.addView(pc, gap(18));

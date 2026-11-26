@@ -79,6 +79,8 @@ final class Background {
      * there until it has been idle that long.
      */
     static final String OUTSIDE = "outside";
+    /** The hidden screen of routines started from Settings → Routines (an outside screen: no chat of their own). */
+    static final String ROUTINES = OUTSIDE + "-routines";
     private static final long OUTSIDE_IDLE_MS = 10 * 60_000L;
     /** When each outside screen's session last made a call, and which of them work on the real screen for now. */
     private static final java.util.Map<String, Long> outsideUsed = new java.util.concurrent.ConcurrentHashMap<>();
@@ -114,7 +116,7 @@ final class Background {
         if (!outside(key)) return on(c, key);
         // (asked from within the session's call, which counts as one going)
         if (outsideOnScreen.contains(key) && idle(key, 1)) outsideOnScreen.remove(key);
-        return !outsideOnScreen.contains(key) && setUp(c) && Prefs.outsideBackground(c);
+        return !outsideOnScreen.contains(key) && setUp(c) && (ROUTINES.equals(key) || Prefs.outsideBackground(c));
     }
 
     /** An outside session made a call: its hidden screen (or its turn on the real one) lasts a while longer. */
@@ -203,6 +205,7 @@ final class Background {
     /** Who an outside session is: the paired computer's name, or this phone's own terminal. */
     static String outsideName(Context c, String key) {
         if (OUTSIDE.equals(key)) return c.getString(R.string.outside_terminal);
+        if (ROUTINES.equals(key)) return c.getString(R.string.routines_title);
         String id = key == null ? "" : key.substring(OUTSIDE.length() + 1);
         String known = names.get(id); // asked on every repaint: the paired list is read once per computer
         if (known != null) return known;
@@ -289,7 +292,51 @@ final class Background {
         int d = Integer.parseInt(id.trim());
         displays.put(chat, d);
         keepAlive(c.getApplicationContext());
+        HiddenMute.check(c); // an app that starts playing there stays quiet
         return d;
+    }
+
+    /** hasApp's last answers, per chat {when, yes}, and the chats being looked at now. */
+    private static final Map<String, long[]> hasAppSeen = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.Set<String> hasAppLooking = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private static final ExecutorService hasAppPool = Executors.newSingleThreadExecutor();
+
+    /**
+     * An app is on the chat's hidden screen now (one it opened and left, or none yet: no). Never blocks: the answer
+     * looked at last (within a second or so), and a fresh look in the background when it's older. Looking means asking
+     * the app on that screen for its window, which waits as long as that app is busy, and its callers (the chat screen,
+     * the team panel, the page's chat) run on the main thread: there it held the whole app up.
+     */
+    static boolean hasApp(String chat) {
+        final int d = displayOf(chat);
+        final BuddyService svc = BuddyService.get();
+        if (d == Display.DEFAULT_DISPLAY || svc == null) return false;
+        long now = android.os.SystemClock.elapsedRealtime();
+        long[] seen = hasAppSeen.get(chat);
+        if ((seen == null || now - seen[0] >= 1000) && hasAppLooking.add(chat)) {
+            hasAppPool.execute(() -> {
+                try {
+                    boolean yes = hasAppNow(svc, d);
+                    hasAppSeen.put(chat, new long[]{android.os.SystemClock.elapsedRealtime(), yes ? 1 : 0});
+                } finally {
+                    hasAppLooking.remove(chat);
+                }
+            });
+        }
+        return seen != null && seen[1] == 1;
+    }
+
+    private static boolean hasAppNow(BuddyService svc, int d) {
+        try {
+            java.util.List<android.view.accessibility.AccessibilityWindowInfo> l = svc.getWindowsOnAllDisplays().get(d);
+            if (l != null) for (android.view.accessibility.AccessibilityWindowInfo w : l) {
+                android.view.accessibility.AccessibilityNodeInfo r = w.getRoot();
+                if (w.getType() == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION && r != null
+                        && r.getPackageName() != null) return true;
+            }
+        } catch (Exception ignored) {
+        }
+        return false;
     }
 
     /** The chat's display if it has one right now, else the real screen's id. Doesn't make one. */
@@ -298,9 +345,15 @@ final class Background {
         return d == null ? Display.DEFAULT_DISPLAY : d;
     }
 
+    /** The chats (and outside sessions) that have a hidden screen now. */
+    static List<String> hiddenChats() {
+        return new ArrayList<>(displays.keySet());
+    }
+
     /** The chat's display goes, with what's on it. */
     static void close(Context c, String chat) {
         if (displays.remove(chat) == null) return;
+        HiddenMute.check(c); // its apps are heard again
         new Thread(() -> {
             try {
                 call(c, "close\t" + chat);
@@ -381,6 +434,7 @@ final class Background {
             } catch (IOException ignored) {
             }
         }
+        HiddenMute.check(svc); // on the user's screen, the app is heard again
         svc.runOnMain(() -> ChatHub.get(svc).setBackground(ses, false));
         return launch == null ? null : pkg;
     }
@@ -527,9 +581,50 @@ final class Background {
      * Settings (a phone that lets Buddy's adb grant it the right needs no walk).
      */
     static String start(Context c, boolean asked) {
-        String why = startNow(c, asked);
-        if (why == null) restartNote = null; // (it runs: why it didn't after the restart is history)
+        if (asked) startBusy.incrementAndGet();
+        String why;
+        try {
+            why = startNow(c, asked);
+        } finally {
+            if (asked) startBusy.decrementAndGet();
+        }
+        if (why == null) { // (it runs: why it didn't before is history)
+            restartNote = null;
+            lastStartWhy = null;
+        }
+        if (asked) { // the user's Start now: why it didn't work, kept for the screen that asked (issue #89)
+            lastStartWhy = why;
+            lastStartAt = android.os.SystemClock.elapsedRealtime();
+            Runnable l = startShown; // (the Background mode screen, if open, shows it; nothing else is opened)
+            if (l != null) l.run();
+        }
         return why;
+    }
+
+    private static final java.util.concurrent.atomic.AtomicInteger startBusy = new java.util.concurrent.atomic.AtomicInteger();
+    /** The Background mode screen while it is in front: drawn again when a Start now ends. */
+    private static volatile Runnable startShown;
+
+    static void onStartEnded(Runnable r) {
+        startShown = r;
+    }
+
+    /** A user's Start now is still at it (the screen may have been drawn anew meanwhile). */
+    static boolean startBusy() {
+        return startBusy.get() > 0;
+    }
+
+    private static volatile String lastStartWhy;
+    private static volatile long lastStartAt;
+
+    /**
+     * Why the user's last Start now didn't work, in the last half hour, or null. Start now may walk Settings for
+     * Wireless debugging, and the Background mode screen is drawn anew when the user comes back: the answer came to the
+     * screen as it was before, and was never seen (issue #89).
+     */
+    static String lastStartWhy() {
+        String w = lastStartWhy;
+        return w == null || android.os.SystemClock.elapsedRealtime() - lastStartAt > 30 * 60_000 ? null : w;
     }
 
     private static String startNow(Context c, boolean asked) {
@@ -589,7 +684,12 @@ final class Background {
             // only what adb itself says means the pairing is gone; anything else is shown as adb said it
             if (out.contains("unauthorized") || out.contains("failed to authenticate")) {
                 return "Buddy isn't paired with this phone's Wireless debugging any more (Settings → Background mode → "
-                        + "Set up). adb said: " + tried;
+                        + "Pair again). adb said: " + tried;
+            }
+            if (refusedKey(out)) { // issue #89: Settings said paired, Wireless debugging no longer listed Buddy
+                return "Buddy isn't paired with this phone's Wireless debugging any more: it refused Buddy's key, which "
+                        + "it does once it has forgotten the pairing (Buddy is then missing from Wireless debugging → "
+                        + "Paired devices). Tap Pair again (Settings → Background mode). adb said: " + tried;
             }
             return "adb couldn't connect to this phone's Wireless debugging. adb said: " + tried;
         }
@@ -601,6 +701,19 @@ final class Background {
         for (String l : out.split("\n")) if (l.startsWith("TRIED ")) b.append(b.length() == 0 ? "" : "; ").append(l.substring(6).trim());
         String s = b.length() > 0 ? b.toString() : out.trim().isEmpty() ? "nothing" : out.trim();
         return s.length() > 800 ? s.substring(0, 800) + "…" : s;
+    }
+
+    /**
+     * Did Wireless debugging turn Buddy's key away? adb then says just "failed to connect to host:port", with no
+     * reason after it (measured with a key the phone doesn't trust; a closed port adds ": Connection refused", a port
+     * that isn't adb's gives "offline").
+     */
+    private static boolean refusedKey(String out) {
+        for (String l : out.split("\n")) {
+            Matcher m = Pattern.compile("^TRIED (\\S+): failed to connect to (\\S+)\\s*/").matcher(l.trim());
+            if (m.find() && m.group(1).equals(m.group(2))) return true;
+        }
+        return false;
     }
 
     /** What the helper itself printed before it gave up (launch's output after LOG=), as ": …", or "". */
@@ -937,6 +1050,7 @@ final class Background {
         }
         if (!was) wirelessDebugging(svc, false); // not started: as it was
         restartNote = why;
+        lastStartWhy = null; // (newer than the last Start now's: this one shows)
         // the pairing is gone, or Wireless debugging didn't come up although it was switched on: no use trying again
         if (tries >= RESTART_TRIES || why.contains("paired") || why.startsWith("Wireless debugging is off")) {
             Prefs.setBackgroundRestartTries(svc, boot, RESTART_TRIES);
@@ -947,6 +1061,7 @@ final class Background {
 
     private static long gaveUp(Context c, int boot, String why) {
         restartNote = why;
+        lastStartWhy = null; // (newer than the last Start now's: this one shows)
         Prefs.setBackgroundRestartTries(c, boot, RESTART_TRIES);
         return 0;
     }
@@ -1067,24 +1182,56 @@ final class Background {
                 }
                 // (Settings.Global.DEVELOPMENT_SETTINGS_ENABLED isn't asked: a Pixel on Android 17 answers 0 with
                 // Developer options on, issue #29. Whether they're on shows when Buddy opens them.)
+                // (this attempt's: a question left open by an earlier one counts for nothing in it, see askForCode)
+                final int mine = ++attempt;
+                typed = null;
+                lastSeen = null;
+                settingsInFront = false;
+                frontUnread = false;
+                dialogSeen = false;
+                tappedPair = false;
+                asking = false;
+                askAgainAt = 0;
+                asks = 0;
                 waitUntil = System.currentTimeMillis() + 5 * 60_000;
                 set(Step.WAITING, "");
                 // Buddy goes there itself; wherever that stops short, the user does the step and it carries on
+                final java.util.concurrent.atomic.AtomicBoolean walked = new java.util.concurrent.atomic.AtomicBoolean();
                 new Thread(() -> {
                     try {
                         openWireless(svc, true);
                     } catch (Exception ignored) {
+                    } finally {
+                        walked.set(true);
                     }
                 }).start();
                 String[] found = null;
+                long inSettings = 0; // since when Settings has been in front with Buddy's walk over, unread
                 while (step == Step.WAITING && System.currentTimeMillis() < waitUntil && found == null) {
                     sleep(700);
                     found = pairingDialog(svc);
+                    if (found == null) found = typed;
+                    // some phones don't let Buddy read that dialog (a Pixel on Android 17, issue #93): the user types
+                    // the code into the bubble instead, over Settings, as the code only works while the dialog is open.
+                    // Asked once Settings has been in front for a while after Buddy's own way there ended: 20 s where
+                    // the dialog is likely open (Buddy tapped its row, sees its fields, or an app window it can't
+                    // read), a minute and a half otherwise (someone still turning Developer options or Wi-Fi on isn't
+                    // asked for a code they can't have yet). "It isn't open yet" asks again later; setup goes on
+                    long now = System.currentTimeMillis();
+                    if (found != null || !walked.get() || !(settingsInFront || frontUnread)) inSettings = 0;
+                    else if (inSettings == 0) inSettings = now;
+                    long need = tappedPair || dialogSeen || frontUnread ? 20_000 : 90_000;
+                    if (found == null && !asking && asks < 3 && inSettings != 0 && now - inSettings > need && now > askAgainAt) {
+                        asking = true;
+                        asks++;
+                        askForCode(svc, mine);
+                    }
                 }
                 if (step != Step.WAITING) return; // cancelled
                 if (found == null) { // the likeliest reason comes along when the phone says Developer options are off
                     set(Step.FAILED, svc.getString(R.string.background_no_dialog)
-                            + (walkStopped.isEmpty() ? "" : "\n(" + walkStopped + ")"));
+                            + (walkStopped.isEmpty() ? "" : "\n(" + walkStopped + ")")
+                            + (lastSeen == null ? "" : "\n(Buddy saw " + lastSeen + ")"));
                     return;
                 }
                 set(Step.PAIRING, "");
@@ -1112,6 +1259,7 @@ final class Background {
                     set(Step.FAILED, why);
                     return;
                 }
+                lastStartWhy = null; // (paired anew: the old reason is history)
                 set(Step.READY, "");
             } catch (Exception e) {
                 set(Step.FAILED, String.valueOf(e.getMessage()));
@@ -1129,6 +1277,7 @@ final class Background {
         displays.clear();
         set(Step.IDLE, "");
         new Thread(() -> {
+            HiddenMute.restoreAllNow(c); // while the helper still runs: what Buddy silenced is heard again
             try {
                 call(c, "quit");
             } catch (IOException ignored) {
@@ -1277,8 +1426,88 @@ final class Background {
             if (m.matches()) port = Integer.parseInt(m.group(1));
         }
         if (port > 0) Prefs.setBackgroundAdbPort(svc, port);
-        if (pairToo) click(code);
+        if (pairToo) {
+            click(code);
+            tappedPair = true; // (the dialog is likely open now: see beginSetup's wait)
+        }
         return port;
+    }
+
+    /** The pairing code the user typed into the bubble (askForCode), as {code, null}, or null. */
+    private static volatile String[] typed;
+    /** That question is open; not before when it is asked again (after "It isn't open yet"); how often it was asked. */
+    private static volatile boolean asking;
+    private static volatile long askAgainAt;
+    private static volatile int asks;
+    /** Signs the dialog is open: Buddy's walk tapped its row; its own fields are on screen (pairingDialog's last look). */
+    private static volatile boolean tappedPair, dialogSeen;
+    /** Settings is in front right now, or a window Buddy can't read at all (pairingDialog's last look). */
+    private static volatile boolean settingsInFront, frontUnread;
+    /** Which setup attempt runs: an earlier one's question, still open, is told apart by it. */
+    private static volatile int attempt;
+
+    /**
+     * Asks in the bubble for the code that "Pair with device" shows, next to the bubble so the dialog stays open; it
+     * closes by itself if Buddy reads the dialog meanwhile. A code goes to typed (Buddy finds the port itself, see
+     * pairingPorts: a number typed beside the code is as likely the connect port, which doesn't pair); an answer
+     * without one is asked again at once; "It isn't open yet", a closed question or none in time asks again later
+     * (see beginSetup's wait). mine: the setup attempt it belongs to; in a later one it counts for nothing.
+     */
+    private static void askForCode(BuddyService svc, final int mine) {
+        new Thread(() -> {
+            McpServer.CALLER_REMOTE.set("Buddy"); // (the card's label: Buddy's own question, of no chat or session)
+            try {
+                for (int i = 0; i < 3 && step == Step.WAITING && attempt == mine; i++) {
+                    // what closes the question by itself: Buddy read the dialog after all (kept: the question looks
+                    // twice, and a second look that finds nothing must not undo the first), or this setup is over
+                    final String[][] read = {null};
+                    final boolean[] over = {false};
+                    String a = svc.askQuestion(svc.getString(R.string.background_type_code),
+                            java.util.Collections.singletonList(svc.getString(R.string.background_no_code)), true, () -> {
+                                if (read[0] == null && !over[0]) {
+                                    if (step != Step.WAITING || attempt != mine) over[0] = true;
+                                    else read[0] = pairingDialog(svc);
+                                }
+                                return read[0] != null || over[0] ? "read" : null;
+                            });
+                    if (attempt != mine || step != Step.WAITING) return; // (another attempt's by now, or over)
+                    if (read[0] != null) {
+                        typed = read[0];
+                        return;
+                    }
+                    if (over[0] || !a.startsWith("ANSWER (typed")) return; // the button, closed, or no answer in time
+                    String code = codeIn(a.substring(a.indexOf(':') + 1));
+                    if (code != null) {
+                        typed = new String[]{code, null};
+                        return;
+                    }
+                }
+            } catch (Exception ignored) {
+            } finally {
+                McpServer.CALLER_REMOTE.remove();
+                if (attempt == mine) { // (asked again in a while, if the code still isn't there)
+                    askAgainAt = System.currentTimeMillis() + 45_000;
+                    asking = false;
+                }
+            }
+        }, "pair-code-ask").start();
+    }
+
+    /**
+     * The 6-digit pairing code in what the user typed, or null: digits of any script, written in one piece or as
+     * "482 913" (with spaces or dashes inside it).
+     */
+    static String codeIn(String said) {
+        StringBuilder b = new StringBuilder();
+        for (int i = 0; i < said.length(); ) {
+            int cp = said.codePointAt(i), d = Character.digit(cp, 10);
+            b.append(d >= 0 ? String.valueOf(d) : new String(Character.toChars(cp)));
+            i += Character.charCount(cp);
+        }
+        Matcher whole = Pattern.compile("(?<!\\d)(\\d{6})(?!\\d)").matcher(b);
+        if (whole.find()) return whole.group(1);
+        Matcher parts = Pattern.compile("(?<!\\d)(\\d{3})[ \\-\u00a0](\\d{3})(?!\\d)").matcher(b);
+        return parts.find() ? parts.group(1) + parts.group(2) : null;
     }
 
     private static boolean isList(AccessibilityNodeInfo n) {
@@ -1296,23 +1525,53 @@ final class Background {
      */
     private static String[] pairingDialog(BuddyService svc) {
         try {
+            java.util.Set<String> apps = new java.util.LinkedHashSet<>();
+            boolean settings = false, unread = false;
+            sawDialogFields = false;
+            java.util.Set<String> shapes = new java.util.LinkedHashSet<>();
+            int[] texts = {0};
             for (AccessibilityWindowInfo w : svc.getWindows()) {
                 AccessibilityNodeInfo root = w.getRoot();
-                if (root == null || !"com.android.settings".contentEquals(String.valueOf(root.getPackageName()))) continue;
+                String pkg = root == null ? "(a window Buddy can't read)" : String.valueOf(root.getPackageName());
+                // (an app's window, as the dialog would be: bars and overlays that give nothing don't count)
+                if (root == null && w.getType() == AccessibilityWindowInfo.TYPE_APPLICATION) unread = true;
+                apps.add(pkg);
+                if (root == null || !"com.android.settings".contentEquals(pkg)) continue;
+                settings = true;
                 String[] found = new String[2];
-                scan(root, found, 0);
+                scan(root, found, 0, shapes, texts);
                 if (found[0] != null) return found;
             }
-        } catch (Exception ignored) {
+            settingsInFront = settings;
+            frontUnread = unread;
+            dialogSeen = sawDialogFields;
+            // what Buddy could see instead, for the reason when setup gives up (issue #93): the apps in front and, in
+            // Settings, how many texts and the shapes of the numbers among them (digits as #, never the numbers)
+            String now = "in front: " + (apps.isEmpty() ? "no window" : android.text.TextUtils.join(", ", apps)) + (settings
+                    ? "; in Settings " + texts[0] + " texts, numbers shaped: " + (shapes.isEmpty() ? "none" : shapes) : "");
+            if (settings || lastSeen == null || !lastSeen.contains("in Settings")) lastSeen = now; // (Settings' last look stays)
+        } catch (Exception e) {
+            lastSeen = "reading the screen failed: " + e;
+            frontUnread = true;
         }
         return null;
     }
 
-    private static void scan(AccessibilityNodeInfo n, String[] found, int depth) {
+    /** scan's note for pairingDialog: the dialog's own fields were among what it read. */
+    private static volatile boolean sawDialogFields;
+
+    /** What pairingDialog last saw in place of the dialog (see there), for the reason when setup gives up. */
+    private static volatile String lastSeen;
+
+    private static void scan(AccessibilityNodeInfo n, String[] found, int depth, java.util.Set<String> shapes, int[] texts) {
         if (n == null || depth > 30) return;
         CharSequence t = n.getText();
         if (t != null) {
             String s = t.toString().trim(), id = String.valueOf(n.getViewIdResourceName());
+            texts[0]++;
+            // (Android's own names for the dialog's fields: it is open, also where its code isn't one Buddy knows)
+            if (id.endsWith(":id/pairing_code") || id.endsWith(":id/ip_addr") || id.endsWith(":id/pairing_caption")) sawDialogFields = true;
+            if (s.length() <= 30 && s.matches(".*\\d.*") && shapes.size() < 12) shapes.add(s.replaceAll("\\d", "#").replaceAll("[^#:. -]", "x"));
             if (CODE.matcher(s).matches()) found[0] = s;
             Matcher m = ADDRESS.matcher(s);
             if (m.matches()) found[1] = m.group(1);
@@ -1321,7 +1580,7 @@ final class Background {
                 if (last.find()) found[1] = last.group(1);
             }
         }
-        for (int i = 0; i < n.getChildCount(); i++) scan(n.getChild(i), found, depth + 1);
+        for (int i = 0; i < n.getChildCount(); i++) scan(n.getChild(i), found, depth + 1, shapes, texts);
     }
 
     /**

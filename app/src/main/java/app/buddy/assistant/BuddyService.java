@@ -22,7 +22,8 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Accessibility service: draws the Buddy bubble, hosts the local MCP server,
- * and performs the screen actions the agent (Claude Code, Codex, OpenCode, Antigravity or Grok) asks for.
+ * and performs the screen actions the agent (Claude Code, Codex, OpenCode, Antigravity, Grok, Copilot or Pi) asks
+ * for.
  */
 public class BuddyService extends AccessibilityService implements McpServer.Handler {
     private static volatile BuddyService instance;
@@ -54,6 +55,10 @@ public class BuddyService extends AccessibilityService implements McpServer.Hand
         android.widget.Toast.makeText(this, R.string.service_pause_expired, android.widget.Toast.LENGTH_LONG).show();
     };
     private Tools tools;
+
+    Tools tools() {
+        return tools;
+    }
     private McpServer server;
     private AutoPause autoPause;
     private final KeepAwake keepAwake = new KeepAwake(this);
@@ -94,8 +99,10 @@ public class BuddyService extends AccessibilityService implements McpServer.Hand
         Models.set("kilo", Prefs.kiloModels(this));
         Models.set("agy", Prefs.agyModels(this));
         Models.set("grok", Prefs.grokModels(this));
+        Models.set("copilot", Prefs.copilotModels(this));
+        Models.set("pi", Prefs.piModels(this));
         new Thread(() -> Attachments.cleanup(this)).start();
-        new Thread(() -> { // API key services: the key saved per agent by earlier builds, then fresh model lists
+        new Thread(() -> { // the services saved in Buddy: the key saved per agent by earlier builds, then fresh model lists
             Providers.migrate(this);
             Providers.rewrite(this); // fields added by this build, before any run reads them
             OnPhone.sync(this); // models on this phone as this build lists them (a context size changed)
@@ -135,6 +142,9 @@ public class BuddyService extends AccessibilityService implements McpServer.Hand
         main.postDelayed(() -> CodexRemote.ensure(this), 4000);
         main.postDelayed(updateCheck, 20_000);
         Schedules.serviceStarted(this); // scheduled tasks' alarms, again after an update or a restart
+        Events.start(this); // and the events that start them (charger, Wi-Fi, Bluetooth, the day's first unlock)
+        HiddenMute.check(this); // apps an earlier Buddy silenced on a hidden screen are heard again
+        DebugLock.start(this); // Wireless debugging back on when the phone switches it off
         // background mode's helper, when the phone was restarted and the user asked for that (not right away: the
         // phone is still busy starting up, and Wi-Fi may not be there yet)
         main.postDelayed(() -> Background.afterRestart(this), 20_000);
@@ -236,20 +246,24 @@ public class BuddyService extends AccessibilityService implements McpServer.Hand
             return;
         }
         if (type != AccessibilityEvent.TYPE_WINDOWS_CHANGED && type != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return;
+        if (!Background.hiddenChats().isEmpty()) HiddenMute.check(this); // another app in front on a hidden screen?
         recheckLock();
-        int top = 0;
+        int top = 0, bottom = 0;
         AccessibilityWindowInfo app = null;
         for (AccessibilityWindowInfo w : getWindows()) {
             if (w.getType() == AccessibilityWindowInfo.TYPE_INPUT_METHOD) {
                 Rect r = new Rect();
                 w.getBoundsInScreen(r);
-                if (!r.isEmpty()) top = r.top;
+                if (!r.isEmpty()) {
+                    top = r.top;
+                    bottom = r.bottom;
+                }
             } else if (w.getType() == AccessibilityWindowInfo.TYPE_APPLICATION
                     && (app == null || w.getLayer() > app.getLayer())) {
                 app = w;
             }
         }
-        if (type == AccessibilityEvent.TYPE_WINDOWS_CHANGED) bubble.onKeyboardTop(top);
+        if (type == AccessibilityEvent.TYPE_WINDOWS_CHANGED) bubble.onKeyboardTop(top, bottom);
         // Opening Home or Recents folds the panel. Decided by the app actually in front changing: the home
         // screen also reports changes while it's already there (e.g. the keyboard opening or closing over it).
         android.view.accessibility.AccessibilityNodeInfo root = app == null ? null : app.getRoot();
@@ -459,6 +473,8 @@ public class BuddyService extends AccessibilityService implements McpServer.Hand
     public void onDestroy() {
         try {
             Background.stopWifiWait(this);
+            Events.stop(this);
+            DebugLock.stop(this);
             unregisterReceiver(lockReceiver);
             unregisterReceiver(cardReceiver);
             getSystemService(android.hardware.display.DisplayManager.class).unregisterDisplayListener(screenListener);
@@ -548,6 +564,67 @@ public class BuddyService extends AccessibilityService implements McpServer.Hand
 
     /** While a Claude or Antigravity sign-in waits for its code, look for it on screen (the browser's confirmation page). */
     private long codeWatchUntil;
+
+    /**
+     * The same for another sign-in (Pi's to Claude, see SignInActivity): the first text on screen that matches, to
+     * found (main thread), for up to 10 minutes or until stopCodeWatch.
+     */
+    private java.util.regex.Pattern otherCode;
+    private java.util.function.Consumer<String> otherFound;
+    private long otherUntil;
+    private final Runnable otherWatch = new Runnable() {
+        @Override
+        public void run() {
+            java.util.regex.Pattern p = otherCode;
+            if (p == null || System.currentTimeMillis() > otherUntil) return;
+            String code = null;
+            try {
+                for (android.view.accessibility.AccessibilityWindowInfo w : getWindows()) {
+                    android.view.accessibility.AccessibilityNodeInfo r = w.getRoot();
+                    if (r == null || getPackageName().contentEquals(String.valueOf(r.getPackageName()))) continue;
+                    code = scanFor(p, r, new int[]{0});
+                    if (code != null) break;
+                }
+            } catch (Exception ignored) {
+            }
+            java.util.function.Consumer<String> f = otherFound;
+            if (code != null && f != null) {
+                otherCode = null;
+                otherFound = null;
+                f.accept(code);
+                return;
+            }
+            main.postDelayed(this, 700);
+        }
+    };
+
+    void watchForCode(java.util.regex.Pattern p, java.util.function.Consumer<String> found) {
+        otherCode = p;
+        otherFound = found;
+        otherUntil = System.currentTimeMillis() + 10 * 60_000L;
+        main.removeCallbacks(otherWatch);
+        main.postDelayed(otherWatch, 1500);
+    }
+
+    void stopCodeWatch() {
+        otherCode = null;
+        otherFound = null;
+        main.removeCallbacks(otherWatch);
+    }
+
+    private static String scanFor(java.util.regex.Pattern p, android.view.accessibility.AccessibilityNodeInfo n, int[] seen) {
+        if (n == null || ++seen[0] > 4000) return null;
+        for (CharSequence t : new CharSequence[]{n.getText(), n.getContentDescription()}) {
+            if (t == null) continue;
+            java.util.regex.Matcher m = p.matcher(t);
+            if (m.find()) return m.group();
+        }
+        for (int i = 0; i < n.getChildCount(); i++) {
+            String c = scanFor(p, n.getChild(i), seen);
+            if (c != null) return c;
+        }
+        return null;
+    }
 
     void watchForLoginCode() {
         codeWatchUntil = System.currentTimeMillis() + 10 * 60_000L; // the old Termux watcher also gave up eventually
@@ -701,6 +778,16 @@ public class BuddyService extends AccessibilityService implements McpServer.Hand
             if (gm != null && gm.length() > 0) {
                 Prefs.setGrokModels(this, gm.toString());
                 Models.set("grok", gm.toString());
+            }
+            org.json.JSONArray pm = event.optJSONArray("copilot_models");
+            if (pm != null && pm.length() > 0) {
+                Prefs.setCopilotModels(this, pm.toString());
+                Models.set("copilot", pm.toString());
+            }
+            org.json.JSONArray im = event.optJSONArray("pi_models");
+            if (im != null && im.length() > 0) {
+                Prefs.setPiModels(this, im.toString());
+                Models.set("pi", im.toString());
             }
             return;
         }
@@ -1087,6 +1174,20 @@ public class BuddyService extends AccessibilityService implements McpServer.Hand
     private static final String TIMED_OUT = "\u0000timed out";
 
     /**
+     * How many cards of a chat wait for the user now (a chat with a team has its members' too): the one notification
+     * on a locked phone goes only once none waits.
+     */
+    private static final java.util.Map<String, Integer> openCards = new java.util.HashMap<>();
+
+    private static synchronized int cardsOpen(String chat, int by) {
+        String k = String.valueOf(chat);
+        int n = Math.max(0, (openCards.containsKey(k) ? openCards.get(k) : 0) + by);
+        if (n == 0) openCards.remove(k);
+        else openCards.put(k, n);
+        return n;
+    }
+
+    /**
      * As above. canAuto: the card may approve itself when its chat is a notification rule's run with a countdown
      * (sending a message may; paying, buying or deleting never does). In a rule's run the card waits a minute at most
      * after its countdown, and not at all while the phone is locked: then the answer is NOT_NOW.
@@ -1094,7 +1195,7 @@ public class BuddyService extends AccessibilityService implements McpServer.Hand
     String askConfirm(final String summary, boolean canAuto) throws InterruptedException {
         final String chat = McpServer.CALLER_CHAT.get();
         // a helper only looks things up: no card for it, whatever the step
-        if (Helpers.is(this, chat)) return "DENIED: " + Helpers.refuse("sending, posting, buying, deleting or changing things");
+        if (Helpers.lookOnly(this, chat)) return "DENIED: " + Helpers.refuse("sending, posting, buying, deleting or changing things");
         boolean rule = Triggers.ruleRun(chat);
         int cd = canAuto ? Triggers.countdown(chat) : 0;
         boolean now = canAuto && Triggers.instant(chat); // the rule's "Don't ask": no card when the second check agrees
@@ -1113,7 +1214,9 @@ public class BuddyService extends AccessibilityService implements McpServer.Hand
             return RULE_APPROVED;
         }
         if (rule && cd == 0 && Triggers.locked(this)) return NOT_NOW;
-        String answer = card(shown, chat, cd, rule ? (cd + 60) * 1000L : Math.max(5 * 60_000L, (cd + 60) * 1000L), null);
+        // (a team member's or a working sub-agent's: in the chat the user talks to, saying who wants it)
+        String answer = card(Helpers.cardText(this, chat, shown), Helpers.cardChat(this, chat), cd,
+                rule ? (cd + 60) * 1000L : Math.max(5 * 60_000L, (cd + 60) * 1000L), null);
         if (!TIMED_OUT.equals(answer)) return answer;
         return rule ? NOT_NOW : "DENIED: the user did not answer within 5 minutes. Do not do it.";
     }
@@ -1179,8 +1282,10 @@ public class BuddyService extends AccessibilityService implements McpServer.Hand
         // from outside Buddy: the card says which computer asks, and Stop on that session denies it
         final String key = Background.outsideCaller();
         final String from = McpServer.CALLER_REMOTE.get();
+        final boolean phoneOnly = WebDevices.cardShown(text); // (before it shows: a paired browser never sees it)
         main.post(() -> bubble.askConfirm(text, chat, countdown, cb, key, from));
         Triggers.approvalShown(this, chat, text, countdown, true, null);
+        cardsOpen(chat, 1);
         String ended = null;
         try {
             java.util.function.BooleanSupplier gone = McpServer.CALLER_GONE.get();
@@ -1190,13 +1295,17 @@ public class BuddyService extends AccessibilityService implements McpServer.Hand
                 else if (System.currentTimeMillis() >= end || gone != null && gone.getAsBoolean()) ended = TIMED_OUT;
             }
         } finally {
-            Triggers.approvalDone(this, chat);
+            if (cardsOpen(chat, -1) == 0) Triggers.approvalDone(this, chat);
         }
         if (cardTouches != touches) rereadNeeded = true; // they used the screen meanwhile: ids may be stale
         if (ended != null) {
-            main.post(() -> bubble.cancelConfirm(cb));
+            main.post(() -> {
+                bubble.cancelConfirm(cb);
+                if (phoneOnly) WebDevices.cardGone(text);
+            });
             return ended;
         }
+        if (phoneOnly) WebDevices.cardGone(text); // (answered: it's off the bubble)
         if (auto.get()) return AUTO_APPROVED;
         if (change.get() != null) {
             return "CHANGES REQUESTED by the user: \u201c" + change.get() + "\u201d. Don't do it as it was; "
@@ -1237,11 +1346,12 @@ public class BuddyService extends AccessibilityService implements McpServer.Hand
         final String from = McpServer.CALLER_REMOTE.get();
         main.post(() -> bubble.askQuestion(question, options, chat, handsOn, cb, key, from));
         Triggers.approvalShown(this, chat, question, 0, false, handsOn ? null : options);
+        cardsOpen(chat, 1);
         boolean answered;
         try {
             answered = awaitAnswer(done, rule ? 60_000L : 5 * 60_000L, stepDone);
         } finally {
-            Triggers.approvalDone(this, chat);
+            if (cardsOpen(chat, -1) == 0) Triggers.approvalDone(this, chat);
         }
         boolean usedScreen = handsOn || cardTouches != touches;
         if (usedScreen) rereadNeeded = true;

@@ -26,8 +26,8 @@ final class Lite {
     /** {name, what it's for, its tools}; a tool in none of them goes with "advanced". */
     private static final String[][] GROUPS = {
             {"screen", "more screen tools: long press, screenshot, scroll until some text shows or gather a long list, "
-                    + "several steps in one call, open a link, list the apps, point something out to the user",
-                    "long_press", "screenshot", "find", "collect", "do_steps", "wait", "open_url", "list_apps", "point_out"},
+                    + "several steps in one call, saved routines, open a link, list the apps, point something out to the user",
+                    "long_press", "screenshot", "find", "collect", "do_steps", "routine", "wait", "open_url", "list_apps", "point_out"},
             {"info", "the phone's status, its notifications (read them, reply to one), location, calendar events, "
                     + "recent calls and SMS (when the user allowed them), what's playing, the clipboard",
                     "device_status", "notifications", "reply_notification", "location", "calendar_events", "call_log",
@@ -40,7 +40,7 @@ final class Lite {
                     "browser_screenshot", "browser_tabs"},
             {"schedule", "messages to yourself at a later time, rules for incoming notifications",
                     "schedule_message", "list_scheduled", "cancel_scheduled", "add_notification_rule"},
-            {"advanced", "sub-agents, phone commands, installing an app, saving a file to Downloads, updating Buddy"},
+            {"advanced", "a team of other agents, phone commands, installing an app, saving a file to Downloads, updating Buddy"},
     };
 
     /** Set while a call loaded tools: the reply tells the agent's client the list changed (see McpServer). */

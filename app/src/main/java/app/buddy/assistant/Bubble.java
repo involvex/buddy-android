@@ -78,6 +78,8 @@ final class Bubble implements ChatHub.Listener {
     // expanded
     private LinearLayout panel, messages, confirmCard;
     private ScrollView scroll;
+    /** The messages' scroll view with its "to the end" arrow over it (Ui.withJumpToEnd): what the panel shows or hides. */
+    private View scrollFrame;
     /** The card's scrolling part (text and answers), and the most it may take so the panel fits (see buildPanel). */
     private ScrollView cardScroll;
     private int cardRoom = Integer.MAX_VALUE;
@@ -456,7 +458,8 @@ final class Bubble implements ChatHub.Listener {
         LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         hlp.topMargin = dp(8);
         panel.addView(helpersList, hlp);
-        panel.addView(scroll, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1));
+        scrollFrame = Ui.withJumpToEnd(svc, scroll, this::scrollToEnd);
+        panel.addView(scrollFrame, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1));
         listScroll = new ScrollView(svc);
         sessionList = new LinearLayout(svc);
         sessionList.setOrientation(LinearLayout.VERTICAL);
@@ -609,7 +612,8 @@ final class Bubble implements ChatHub.Listener {
         input.setMaxLines(4);
         input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE
                 | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES | InputType.TYPE_TEXT_FLAG_AUTO_CORRECT);
-        input.setImeOptions(EditorInfo.IME_ACTION_SEND);
+        // (never the keyboard's own full-screen text box, which some keyboards open in landscape over the whole panel)
+        input.setImeOptions(EditorInfo.IME_ACTION_SEND | EditorInfo.IME_FLAG_NO_EXTRACT_UI | EditorInfo.IME_FLAG_NO_FULLSCREEN);
         input.setPaddingRelative(dp(12), dp(10), dp(12), dp(4));
         input.setBackground(null);
         input.setOnFocusChangeListener((v, has) -> {
@@ -889,8 +893,13 @@ final class Bubble implements ChatHub.Listener {
         fitKeyboard();
     }
 
-    /** Where the accessibility service sees the keyboard's top (0: no keyboard). */
-    void onKeyboardTop(int top) {
+    /**
+     * Where the accessibility service sees the keyboard's top (0: no keyboard), and its bottom. Only a keyboard along
+     * the bottom of the screen covers the panel: the floating bar a keyboard app shows beside a physical keyboard, or
+     * a floating keyboard, sits elsewhere, and room made for it from its top squeezed the panel to nothing (issue #88).
+     */
+    void onKeyboardTop(int top, int bottom) {
+        if (top > 0 && bottom < usable().bottom - dp(48)) top = 0; // (above a taskbar or a tall navigation bar: still along the bottom)
         if (top == imeTop) return;
         imeTop = top;
         fitKeyboard();
@@ -919,6 +928,10 @@ final class Bubble implements ChatHub.Listener {
         else if (kb > 0) lastKeyboard[slot] = kb;
         // (a card on its own already sits above the navigation bar: only the rest of the keyboard needs room)
         int pad = kb > 0 ? Math.max(0, kb - (cardOnly ? lp.y : 0)) + dp(8) : 0;
+        // and never so much that the panel has no room left for the message box and a few lines of the chat: a
+        // keyboard that reports more than it covers (a landscape tablet, issue #88) can't hide the panel then
+        int keep = Math.min(root.getHeight(), dp(120)); // (the message box and a line or two above it)
+        if (root.getHeight() > 0 && pad > root.getHeight() - keep) pad = Math.max(0, root.getHeight() - keep);
         if (headButtons != null) headButtons.setVisibility(pad > 0 ? View.GONE : View.VISIBLE); // room for the chat
         if (root.getPaddingBottom() != pad) {
             root.setPaddingRelative(0, 0, 0, pad);
@@ -1204,7 +1217,11 @@ final class Bubble implements ChatHub.Listener {
         // during a live voice call, which only its own chat's screen can end otherwise.
         liveUp = CodexLive.on();
         boolean inBuddy = Screen.anyOpen() && Prefs.bubbleHideInApp(svc) && Prefs.hadReply(svc) && !noteListening && !liveUp;
-        boolean show = !locked && (((Prefs.bubbleEnabled(svc) || controlling) && !inBuddy) || expanded || pendingConfirm != null
+        // a chat's card while Buddy lists it (the chat list's Waiting rows, or its own chat's inline card): it's there,
+        // so no bubble over it (issue #73). A card from outside Buddy has no chat to show it in: the bubble does
+        boolean cardListed = pendingConfirm != null && cardChat != null && inBuddy && (MainActivity.shown || hub.onScreen(cardChat));
+        boolean show = !locked && (((Prefs.bubbleEnabled(svc) || controlling) && !inBuddy) || expanded
+                || (pendingConfirm != null && !cardListed)
                 || (svc.paused() && !hiddenInPause) || talkListening); // (it listens: it stays till that's done)
         boolean wasHidden = root.getVisibility() != View.VISIBLE;
         root.setVisibility(show ? View.VISIBLE : View.GONE);
@@ -1950,7 +1967,8 @@ final class Bubble implements ChatHub.Listener {
     }
 
     private void stop() {
-        if (!sessions.current.running) toast(svc.getString(R.string.bubble_nothing_running_chat));
+        // (a chat with a team: its members may work while its own agent doesn't; Stop stops them too)
+        if (!Team.working(hub, sessions.current)) toast(svc.getString(R.string.bubble_nothing_running_chat));
         else hub.stop(sessions.current);
     }
 
@@ -1969,7 +1987,7 @@ final class Bubble implements ChatHub.Listener {
     /** The chats list or the new-chat picker is showing: no composer, like the app's Chats tab. */
     private void showListMode() {
         listScroll.setVisibility(showingList ? View.VISIBLE : View.GONE);
-        scroll.setVisibility(showingList ? View.GONE : View.VISIBLE);
+        scrollFrame.setVisibility(showingList ? View.GONE : View.VISIBLE);
         if (composer != null && voiceBar != null && voiceBar.getVisibility() != View.VISIBLE) {
             composer.setVisibility(showingList ? View.GONE : View.VISIBLE);
         }
@@ -2042,7 +2060,7 @@ final class Bubble implements ChatHub.Listener {
         }
         View heading = null;
         for (final String[] o : options) {
-            if (o[0] == null) { // an API key service's models
+            if (o[0] == null) { // a service's models
                 TextView sl = Ui.sectionLabel(svc, o[1]);
                 sl.setPaddingRelative(dp(8), dp(14), 0, dp(2));
                 sessionList.addView(sl);
@@ -2664,7 +2682,8 @@ final class Bubble implements ChatHub.Listener {
         vibrate(60);
         if (!open) collapse(); // the screen stays free for the step; the pill asks
         // in the chat's own screen the card shows there, with the same buttons: no panel popping up over it (#41)
-        else if (!hub.onScreen(cardChat)) expand();
+        else if (!hub.onScreen(cardChat) && !(MainActivity.shown && cardChat != null && Prefs.bubbleHideInApp(svc)
+                && Prefs.hadReply(svc))) expand(); // (the chat list shows it too: issue #73)
         // on the lock screen the card waits out of sight (a notification says so): approving needs the phone unlocked
         applyEnabled();
         if (card.countdown > 0) startCountdown(card.countdown);
@@ -2954,6 +2973,11 @@ final class Bubble implements ChatHub.Listener {
     private String activityChat;
     private long activityAt;
     private static final long ACTIVITY_MS = 8_000;
+    /** Working off the screen: how long the small pill shows something new (see refreshStatus). */
+    private static final long BG_PILL_MS = 4_000;
+    private String bgShown;
+    private long bgAt;
+    private final Runnable bgHide = this::refreshStatus;
     private final Runnable activityExpired = this::refreshStatus;
 
     /**
@@ -2993,9 +3017,10 @@ final class Bubble implements ChatHub.Listener {
         if (paused && pendingConfirm == null) {
             text = svc.getString(R.string.bubble_pill_paused);
         } else if (controlling && pendingConfirm == null) {
-            String step = fresh && !activityBrowser ? activity : text; // the tool's own step is the most precise
-            text = step == null || step.isEmpty() ? svc.getString(R.string.bubble_using_phone)
-                    : svc.getString(R.string.bubble_using_phone_status, step);
+            // each step shows for a few seconds, then the pill goes until the next one (issue #73: a long phone command
+            // kept it on the screen the whole time); the working ring and the screen's edge still say it's at work
+            String step = fresh && !activityBrowser ? activity : null;
+            text = step == null || step.isEmpty() ? null : svc.getString(R.string.bubble_using_phone_status, step);
         } else if (browsing && pendingConfirm == null) {
             text = activity;
         }
@@ -3027,22 +3052,41 @@ final class Bubble implements ChatHub.Listener {
         // working, but not on the screen (the background browser, Linux tools, thinking): the phone is the user's, so
         // the pill says so above the status and the ring is calm; on the screen (ControlIndicator) the look stays loud
         boolean background = !paused && !controlling && (running || browsing) && pendingConfirm == null;
-        if (!paused && (controlling || browsing || hub.runningCount() > 0) && pendingConfirm == null && !Prefs.menuHinted(svc)) {
+        if (!paused && !background && (controlling || browsing || hub.runningCount() > 0) && pendingConfirm == null && !Prefs.menuHinted(svc)) {
             text = text == null ? svc.getString(R.string.bubble_pill_hold_hint)
                     : svc.getString(R.string.bubble_pill_status_hold_hint, text);
         }
         if (!noteListening) { // while dictating a note the pill shows what's heard
             CharSequence shown = text;
+            boolean small = false;
             if (background && text != null) {
-                android.text.SpannableStringBuilder sb = new android.text.SpannableStringBuilder(
-                        svc.getString(R.string.bubble_pill_background));
-                sb.setSpan(new android.text.style.RelativeSizeSpan(0.85f), 0, sb.length(), 0);
-                sb.setSpan(new android.text.style.ForegroundColorSpan(Ui.MUTED), 0, sb.length(), 0);
-                shown = sb.append('\n').append(text);
-            }
-            pill.setMaxLines(background ? 3 : 2); // the note's line, then the status's two
+                // working off the screen: the phone is the user's, so the pill is small and brief, one line for a few
+                // seconds when there's something new (it stayed on the screen the whole time); the calm ring says the rest
+                // (an agent outside Buddy's chats in the background browser: its own step, no chat's text)
+                String now = hub.runningCount() == 0 ? text.toString() : hub.pillText();
+                long t = android.os.SystemClock.elapsedRealtime();
+                // new is a chat starting or ending, another chat taking the latest step, or a reply: not every step
+                Sessions.Session about = hub.pillChat();
+                int n = hub.runningCount();
+                String key = n + "|" + (about == null ? "" : about.id) + (n == 0 ? "|" + now : "");
+                if (now != null && !key.equals(bgShown)) {
+                    bgShown = key;
+                    bgAt = t;
+                }
+                small = true;
+                shown = now;
+                if (now == null || t - bgAt >= BG_PILL_MS) shown = null;
+                else {
+                    root.removeCallbacks(bgHide);
+                    root.postDelayed(bgHide, BG_PILL_MS - (t - bgAt) + 50);
+                }
+            } else bgShown = null;
+            pill.setTextSize(TypedValue.COMPLEX_UNIT_SP, small ? 11 : 13);
+            pill.setPaddingRelative(dp(small ? 9 : 12), dp(small ? 4 : 8), dp(small ? 9 : 12), dp(small ? 4 : 8));
+            pill.setMaxWidth(dp(small ? 170 : 250));
+            pill.setMaxLines(small ? 1 : 2);
             pill.setText(shown == null ? "" : shown);
-            pill.setVisibility(text == null ? View.GONE : View.VISIBLE);
+            pill.setVisibility(shown == null ? View.GONE : View.VISIBLE);
         }
         ring.setCalm(background);
         // in control: a solid accent pill, so it's clear not to touch the phone
@@ -3333,6 +3377,7 @@ final class Bubble implements ChatHub.Listener {
     private void renderHelpers(Sessions.Session ses) {
         if (helpersList == null) return;
         java.util.List<Sessions.Session> l = ses == null || !ses.parent.isEmpty() ? new java.util.ArrayList<>() : Helpers.of(hub, ses.id);
+        if (ses != null && ses.team != null) l.addAll(Team.sessions(hub, ses)); // its team's members, the same way
         StringBuilder sig = new StringBuilder();
         for (Sessions.Session h : l) sig.append(h.id).append(h.running).append(h.outcome).append(h.status).append('|');
         if (sig.toString().equals(helpersShown)) return;
@@ -3524,7 +3569,8 @@ final class Bubble implements ChatHub.Listener {
     private void showMessage(Sessions.Msg m) {
         boolean sent = m.kind == Kind.USER && SystemClock.uptimeMillis() - sentAt < 3000; // (not a rule's or a schedule's)
         if (m.files.isEmpty()) {
-            showMessage(m.kind, m.text);
+            // (in a chat with a team: which member said it; the chat screen shows it in the member's colour)
+            showMessage(m.kind, m.from.isEmpty() ? m.text : m.kind == Kind.BUDDY ? "**" + m.fromName + ":** " + m.text : m.fromName + ": " + m.text);
             if (sent) scrollToEnd();
             else followEnd();
             return;
