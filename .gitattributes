@@ -1,0 +1,12 @@
+# Shell helpers run under Alpine/proot: CRLF makes bash exit 2 ("syntax error near `{").
+linux/** text eol=lf
+linux/buddy-run text eol=lf
+linux/buddy-copilot text eol=lf
+linux/buddy-browser text eol=lf
+linux/codex-remote text eol=lf
+linux/arecord text eol=lf
+linux/onphone-get text eol=lf
+linux/profile.sh text eol=lf
+linux/test/run.sh text eol=lf
+native/*.sh text eol=lf
+*.sh text eol=lf

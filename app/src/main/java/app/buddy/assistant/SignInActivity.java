@@ -235,8 +235,13 @@ public class SignInActivity extends Screen implements Account.Listener {
             case ERROR:
                 header(R.drawable.ms_error, getString(R.string.signin_error_title), acc.detail, false);
                 primary(getString(R.string.signin_try_again), v -> {
-                    acc.step = Account.Step.CHECKING;
-                    acc.refresh(this);
+                    // Failed install leaves no version: install again. A failed check of an installed agent refreshes.
+                    if (acc.version.isEmpty()) {
+                        acc.install(this);
+                    } else {
+                        acc.step = Account.Step.CHECKING;
+                        acc.refresh(this);
+                    }
                     render();
                 });
                 if (!acc.errorDetail.isEmpty()) { // what the installer itself said, for a bug report

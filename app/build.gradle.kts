@@ -44,6 +44,18 @@ val prepareBuddyAssets = tasks.register<Sync>("prepareBuddyAssets") {
         if (!buddyRun.isFile) {
             throw GradleException("prepareBuddyAssets did not produce linux/buddy-run from ${rootProject.file("linux")}")
         }
+        // Windows checkouts often have CRLF (core.autocrlf). Alpine bash then dies with exit 2 on `{`.
+        val linuxDir = packedAssets.get().dir("linux").asFile
+        linuxDir.walkTopDown().filter { it.isFile }.forEach { f ->
+            val name = f.name
+            val script = name == "buddy-run" || name == "buddy-copilot" || name == "buddy-browser"
+                    || name == "codex-remote" || name == "arecord" || name == "onphone-get"
+                    || name.endsWith(".sh")
+            if (!script) return@forEach
+            val bytes = f.readBytes()
+            if (!bytes.contains('\r'.code.toByte())) return@forEach
+            f.writeBytes(bytes.filterNot { it == '\r'.code.toByte() }.toByteArray())
+        }
     }
 }
 tasks.named("preBuild").configure { dependsOn(prepareBuddyAssets) }

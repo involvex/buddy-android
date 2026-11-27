@@ -572,11 +572,22 @@ final class Account {
                     Linux.install(app);
                     Helper.sync(app); // (also points apk and npm at the chosen download server, see Mirrors)
                     set(Step.INSTALLING, app.getString(R.string.account_installing_tools));
-                    String o = Linux.exec(app, "apk update -q && apk add -q bash curl jq libgcc libstdc++ ripgrep git "
+                    // ripgrep is in community; keep that repo if a mirror rewrite dropped it. No -q: a quiet
+                    // failure only left "[exit 1]" on screen with no way to see why apk refused.
+                    String alpine = Mirrors.alpine(app);
+                    String o = Linux.exec(app, "rel=$(cut -d. -f1,2 /etc/alpine-release 2>/dev/null);"
+                            + " [ -n \"$rel\" ] || rel=3.24;"
+                            + " grep -q \"/$rel/main\" /etc/apk/repositories || echo '" + alpine + "/v'$rel'/main' >>/etc/apk/repositories;"
+                            + " grep -q \"/$rel/community\" /etc/apk/repositories || echo '" + alpine + "/v'$rel'/community' >>/etc/apk/repositories;"
+                            + " echo '--- repositories ---'; cat /etc/apk/repositories;"
+                            + " echo '--- apk update ---'; apk update 2>&1 | tail -20;"
+                            + " echo '--- apk add ---'; apk add bash curl jq libgcc libstdc++ ripgrep git "
                             + "ca-certificates procps coreutils findutils"
                             + (claude() || agy() || grok() ? "" : " nodejs npm")
                             + (agy() ? " util-linux-misc" : "") // script: Antigravity's sign-in needs a terminal
-                            + " && echo TOOLS_OK", 900);
+                            + " 2>&1 | tail -40;"
+                            + " command -v bash >/dev/null && command -v curl >/dev/null && command -v jq >/dev/null "
+                            + "&& echo TOOLS_OK", 900);
                     if (!o.contains("TOOLS_OK")) throw new IOException(tail(o));
                 }
                 if (claude()) {
@@ -644,8 +655,9 @@ final class Account {
                 refresh(app);
             } catch (Exception e) {
                 String raw = String.valueOf(e.getMessage()), plain = plainError(app, raw);
-                errorDetail = plain == null ? "" : raw;
-                set(Step.ERROR, plain != null ? plain : app.getString(R.string.account_install_failed, raw));
+                // Always keep the installer output for Details — quiet apk used to leave only "[exit 1]".
+                errorDetail = raw == null ? "" : raw;
+                set(Step.ERROR, plain != null ? plain : app.getString(R.string.account_install_failed, shortError(raw)));
             }
         }).start();
     }
@@ -1046,6 +1058,13 @@ final class Account {
 
     private static String tail(String s) {
         s = s.trim();
-        return s.length() > 300 ? "…" + s.substring(s.length() - 300) : s;
+        return s.length() > 1200 ? "…" + s.substring(s.length() - 1200) : s;
+    }
+
+    /** One-line summary for the error title; full text stays in {@link #errorDetail}. */
+    private static String shortError(String s) {
+        if (s == null) return "";
+        s = s.trim().replaceAll("\\s+", " ");
+        return s.length() > 180 ? "…" + s.substring(s.length() - 180) : s;
     }
 }
